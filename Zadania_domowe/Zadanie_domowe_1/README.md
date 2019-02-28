@@ -22,4 +22,4 @@ Zapoznaj się z pakietem [HoloViews](http://holoviews.org/gallery/index.html) (P
 
 Termin oddania: 7 III 2019 r.
 
-Rozwiązania proszę zgłaszać przez pull request do podfolderu z imieniem i nazwiskiem lub innym jednoznacznym identyfikatorem (można sobie ustalić jakąś nazwę i dać mi znać, z kim mam ją wiązać - tylko stosować ją konsekwentnie w kolejnych zadaniach).
+Rozwiązania proszę zgłaszać przez pull request do podfolderu z imieniem i nazwiskiem lub innym jednoznacznym identyfikatorem (można sobie ustalić jakąś nazwę i dać mi znać, z kim mam ją wiązać - tylko stosować ją konsekwentnie w kolejnych zadaniach). Oczywiście, proszę zgłaszać htmle + ew. Rmd/ipynb, bez danych.(:
