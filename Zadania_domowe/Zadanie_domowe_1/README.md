@@ -21,3 +21,5 @@ Zadanie na bonusowy punkt:
 Zapoznaj się z pakietem [HoloViews](http://holoviews.org/gallery/index.html) (Python). Czy pomaga w eksploracji danych z Allegro (niekoniecznie tylko zmiennych wymienionych w zadaniu).
 
 Termin oddania: 7 III 2019 r.
+
+Rozwiązania proszę zgłaszać przez pull request do podfolderu z imieniem i nazwiskiem lub innym jednoznacznym identyfikatorem (można sobie ustalić jakąś nazwę i dać mi znać, z kim mam ją wiązać - tylko stosować ją konsekwentnie w kolejnych zadaniach).
