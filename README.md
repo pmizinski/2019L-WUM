@@ -3,27 +3,22 @@ Wstęp do uczenia maszynowego - laboratoria
 
 Wstępny plan laboratoriów:
 
-- 19 II 2019 - DataExplorer i mlr / Zajęcia organizacyjne.
-- 26 II 2019 - Pakiet mlr. Eksploracja danych. / Data Camp i projekty.
-- 5 III 2019 - Inżynieria cech / Wybór projektów.
-- 12 III 2019 - Klasteryzacja / Projekt I, faza  I - konsultacje.
-- 19 IIII 2019 - Klasteryzacja cd. / Projekt I, faza I - prezentacje.
-- 26 IIII 2019 - Analiza koszykowa / Projekt I, faza II - konsultacje.
-- 2 IV 2019 - Redukcja wymiaru / Projekt I, faza II - prezentacje.
+- 19 II 2019 - DataExplorer i mlr Zajęcia organizacyjne.
+- 26 II 2019 - Pakiet mlr. Eksploracja danych. Data Camp i projekty.
+- 5 III 2019 - Inżynieria cech i Wybór projektów.
+- 12 III 2019 -   / Projekt I, faza  I - konsultacje.
+- 19 IIII 2019 -  / Projekt I, faza I - prezentacje.
+- 26 IIII 2019 -  / Projekt I, faza II - konsultacje.
+- 2 IV 2019 -  / Projekt I, faza II - prezentacje.
 - 9 IV 2019 - Klasyfikacja. Ocena klasyfikatorów / Projekt I, faza III - konsultacje.
 - 16 IV 2019 - Modele klasyfikacyjne / Projekt I, faza III - prezentacje.
 - 30 IV 2019 - Modele klasyfikacyjne cd. / Projekt II, faza I - konsultacje.
 - 7 V 2019 - Strojenie hiperparametrów / Projekt II, faza I - prezentacje.
-- 14 V 2019 - Klasyfikacja wieloetykietowa / Projekt II, faza II - konsultacje.
-- 21 V 2019 - A. genetyczne, metody rozmyte / Projekt II, faza II - prezentacje.
-- 28 V 2019 - Szeregi czasowe / Projekt II, faza III - konsultacje.
-- 4 VI 2019 - Sieci neuronowe / Projekt II, faza III - prezentacje.
-
-W czasie prezentacji wyników na zajęciach popołudniowych musi być obecny przynajmniej jeden członek zespołu.
-Zalecam pracę w grupach trzyosobowych.
-Na zajęciach konsultacyjnych spotykamy się osobno z każdą grupą.
-
-Na porannych zajęciach pracujemy na komputerach. Najpierw odbywa się prezentacja narzędzi i metod, następnie rozwiązujemy zadania. Po każdych zajęciach należy rozwiązać zadanie domowe.
+- 14 V 2019 - Klasteryzacja / Projekt II, faza II - konsultacje.
+- 21 V 2019 - Klasteryzacja cd. / Projekt II, faza II - prezentacje.
+- 28 V 2019 - Redukcja wymiaru / Projekt II, faza III - konsultacje.
+- 4 VI 2019 - Analiza koszykowa / Projekt II, faza III - prezentacje.
+- 11 VI 2019 - TBA
 
 Kryteria oceniania: 
 
