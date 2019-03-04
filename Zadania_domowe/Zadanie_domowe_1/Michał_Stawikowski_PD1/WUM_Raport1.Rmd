@@ -1,0 +1,281 @@
+---
+title: "Eksploracja danych Api Allegro"
+author: "Michał Stawikowski"
+date: "3 marca 2019"
+output:
+  html_document:
+    toc: yes
+  pdf_document:
+    toc: yes
+---
+
+# Wstęp
+
+W tym raporcie postaram się przeprowadzić eksplorację danych pochodzących z jednego dnia, uzyskanych z API Allegro. Użyję do tego bazowych funkcji `R`, podstawowych pakietów takich jak `ggplot2`, czy `dplyr` oraz bardziej zaawansowanych, przeznaczonych do eksploracji dancych pakietów `visdat` oraz `dataMaid`. Dwa ostatnie wymienione pakiety pomagają w automatyzacji analizy danych. Dane opisują zamówienia z serwisu Allegro na przestrzenie jednego dnia. Zmienne zawierają informacje min:. o cenach zamówionych produktów, ilości zamówień, czy ocenach sprzedających.
+
+# Podsumowanie numeryczne oraz sprawdzenie poprawności danych
+
+## Bazowa funckcja `summary`
+
+```{r , echo=FALSE, include=FALSE, warning=FALSE, message=FALSE, error=FALSE}
+library(readr)
+library(dplyr)
+library(vioplot)
+library(ggplot2)
+library(scales)
+library(devtools)
+library(visdat)
+library(dataMaid)
+library(rmarkdown)
+setwd("C:/Users/jaiko/Desktop/WUM/Lab1")
+
+
+options(stringsAsFactors = FALSE)
+api <- read_csv("allegro-api-transactions.csv")
+txt <- read.delim("allegro-categories-eng.txt",sep=";")
+colnames(txt)[1] <- "main_category"
+final <- full_join(api, txt)
+```
+```{r  warning=FALSE, message=FALSE, error=FALSE}
+summary(final$price)
+summary(final$it_is_allegro_standard)
+summary(final$it_is_brand_zone)
+summary(final$it_seller_rating)
+summary(final$date)
+summary(final$pay_option_on_delivery)
+summary(final$pay_option_transfer)
+```
+Podsumowanie dla głównych zmiennych ramki danych.
+
+
+## Analiza poprawności i podsumowanie przy użyciu pakietu `datavis`
+
+```{r  warning=FALSE, message=FALSE, error=FALSE, cache=TRUE}
+vis_dat(final, warn_large_data = FALSE) + scale_y_continuous(labels = comma)
+
+vis_miss(final,warn_large_data = FALSE) + scale_y_continuous(labels = comma)
+```
+
+Funkcja `vis_dat` zwraca nam prosty opis danych z podziałem na kategorie zmiennych, zaś funkcja `vis_miss` skupia się na brakujących danych. Niestety pakiet nie jest do końca przystosowany do danych dużych rozmiarów i dość bezwzględnie zaokrągla wyniki obliczeń przez co tracimy część informacji. Wizualizacje są przyjemne dla oka, a funkcje proste w użyciu, aoutomatyzują część pracy przy eksploracji danych.
+
+## Podsumowanie graficzne
+
+## Pakiet `ggplot2` i funckje bazowe
+
+### Zmienna `price`
+
+```{r  warning=FALSE, message=FALSE, error=FALSE, cache=TRUE}
+boxplot(final$price)
+ograniczonaCena <- final$price[final$price<1000]
+boxplot(ograniczonaCena)
+```
+
+Jak widać na boxplotach cena skupia się głównie w przedziale od 0 do 1000 zł, dlatego też drugi boxplot przedstawia dane ograniczone właśnie do tych wartości, dzięki temu możemy lepiej przeanalizować rozkład cen.
+
+### Zmienna `Seller rating`
+
+```{r  warning=FALSE, message=FALSE, error=FALSE, cache=TRUE}
+boxplot(final$it_seller_rating)
+ggplot(final,aes(x=final$it_seller_rating)) + geom_histogram(bins = 100,fill="steelblue",alpha=0.9) +
+  scale_x_continuous(labels = comma) +
+  xlab("User rating") + ylab("Number of orders") + ggtitle("Number of orders by user rating")
+```
+
+Oceny sprzedawców też, tak samow jak cena skupione są przy mniejszych wartościach, jednak nie występują wartości aż tak odstające jak w przypadku poprzedniej zmiennej.
+
+### Zmienna `Allegro standard`
+
+```{r  warning=FALSE, message=FALSE, error=FALSE, cache=TRUE}
+Yes <- sum(na.omit(final$it_is_allegro_standard))
+Noo <- length(na.omit(final$it_is_allegro_standard)) - Yes
+Liczba <- c(Yes,Noo)
+AllegroStandard <- c("Yes", "No")
+Standard <- data.frame(Liczba,AllegroStandard)
+
+ggplot(data=Standard, aes(x=AllegroStandard, y=Liczba)) + geom_bar(stat = "identity",fill="steelblue") +
+  ylab("Number of orders") + ggtitle("Number of orders by Allegro Standard")
+```
+
+Nie jest to najciekawsza zmienna do analizowania, jednak z wykresu słupkowego widać, że większość zamówień posiada standard Allegro.
+
+### Zmienna `Brand Zone`
+
+```{r  warning=FALSE, message=FALSE, error=FALSE, cache=TRUE}
+Yes <- sum(na.omit(final$it_is_brand_zone))
+Noo <- length(na.omit(final$it_is_brand_zone)) - Yes
+Liczba <- c(Yes,Noo)
+BrandZone <- c("Yes", "No")
+Standard <- data.frame(Liczba,BrandZone)
+
+ggplot(data=Standard, aes(x=BrandZone, y=Liczba)) + geom_bar(stat = "identity",fill="steelblue") +
+  ylab("Number of orders") + scale_y_continuous(labels = comma) + ggtitle("Number of orders by Brand Zone")
+```
+
+Większośc zamówień pochodziła ze Strefy Marek.
+
+### Zmienne dotyczące opcji płatności.
+
+```{r  warning=FALSE, message=FALSE, error=FALSE, cache=TRUE}
+Yes <- sum(na.omit(final$pay_option_on_delivery))
+Noo <- length(na.omit(final$pay_option_on_delivery)) - Yes
+Liczba <- c(Yes,Noo)
+DeliveryOption <- c("On delivery", "Not on delivery")
+Standard <- data.frame(Liczba,DeliveryOption)
+
+ggplot(data=Standard, aes(x=DeliveryOption, y=Liczba)) + geom_bar(stat = "identity",fill="steelblue") +
+  ylab("Number of orders") + ggtitle("Number of orders by Pay Option")+ scale_y_continuous(labels = comma)
+
+Yes <- sum(na.omit(final$pay_option_transfer))
+Noo <- length(na.omit(final$pay_option_transfer)) - Yes
+Liczba <- c(Yes,Noo)
+DeliveryOption <- c("Transfer", "Not on transfer")
+Standard <- data.frame(Liczba,DeliveryOption)
+
+ggplot(data=Standard, aes(x=DeliveryOption, y=Liczba)) + geom_bar(stat = "identity",fill="steelblue") +
+  ylab("Number of orders") + ggtitle("Number of orders by Pay Option")+ scale_y_continuous(labels = comma)
+```
+
+Zmienne odpowiadające za sposób płatności wyglądają tak, jakby nie były wykluczające się. Sprawdźmy to przy użyciu funkcju `vis_compare`.
+
+```{r  warning=FALSE, message=FALSE, error=FALSE, cache=TRUE}
+vis_compare(data.frame(final$pay_option_on_delivery),data.frame(final$pay_option_transfer)) + scale_y_continuous(labels = comma)
+```
+
+Tak jak widzimy na wykresie większość wartości pokrywa się, co może wskazywać na to, że przelewem można płacić także przy odbiorze.
+
+### Zmienna `Categories`
+
+```{r  warning=FALSE, message=FALSE, error=FALSE, cache=TRUE,fig.width = 10}
+number <- count(final, main_category)
+number <- arrange(number, -n)
+number <- head(number,7)
+
+ggplot(data=number, aes(x=reorder(number$main_category, -number$n), y=number$n)) + geom_bar(stat = "identity",fill="steelblue") +
+  ylab("Number of orders") + ggtitle("Number of orders by Categories")+ scale_y_continuous(labels = comma) + xlab("Category")
+
+```
+
+Na tym wykresie słupkowym zostały przedstawione najpopularniejsze kategorie pod względem ilości zamóWień.
+
+### Zmienna `Location`
+
+```{r  warning=FALSE, message=FALSE, error=FALSE, cache=TRUE,fig.width = 10}
+number <- count(final, it_location)
+number <- arrange(number, -n)
+number <- head(number,7)
+
+ggplot(data=number, aes(x=reorder(number$it_location, -number$n), y=number$n)) + geom_bar(stat = "identity",fill="steelblue") +
+  ylab("Number of orders") + ggtitle("Number of orders by City")+ scale_y_continuous(labels = comma) + xlab("City")
+
+```
+
+Z tego wykresu możemy przekonać się skąd pochodzi większość zamówień. Przedstawione zostało 7 miast z największą ilością zamówień.
+
+### Zmienna `Date`
+
+```{r  warning=FALSE, message=FALSE, error=FALSE, cache=TRUE,fig.width = 10}
+ggplot(final, aes(x=as.POSIXct(final$date, format = "%H:%M:%S"))) +
+  geom_histogram(bins = 100,fill="steelblue",alpha=0.9) +
+  xlab("Time") + ylab("Number of orders") + ggtitle("Number of orders by time")
+
+```
+
+To jedna z ciekaszych zmiennych do analizowania, dzięki niej możemy się przekonać, kiedy klienci najczęściej dokonują zakpupów oraz znależć takie anomalie jak spadek ilości zamówień około godziny 22:00. Liczba zamówiń rośnie od rana by osiągnąć maksima w godzinach nocnych, kiedy większość ludzi prawdopodobnie skończła pracę i wróciła do domów.
+
+### Zmienna `Seller`
+
+```{r  warning=FALSE, message=FALSE, error=FALSE, cache=TRUE,fig.width = 10}
+number <- count(final, seller)
+number <- arrange(number, -n)
+number <- head(number,7)
+
+ggplot(data=number, aes(x=reorder(number$seller, -number$n), y=number$n)) + geom_bar(stat = "identity",fill="steelblue") +
+  ylab("Number of orders") + ggtitle("Number of orders by Seller")+ scale_y_continuous(labels = comma) + xlab("Seller")
+```
+
+Z tego wykresu możemy odczytać, że pod względem zamówień tego dnia najlepiej poradziły sobie różne sklepy internetowe jak i samo Allegro, chociaż wnioskując po nickach możliwe, że wśród 7 sprzedawców z największą ilością zamówień znaleźli się też indywidualni użytkownicy.
+
+## Zależności wielu zmiennych
+
+### Zależność `price` od `category`
+
+```{r  warning=FALSE, message=FALSE, error=FALSE, cache=TRUE,fig.width = 10}
+final2 <- na.omit(final)
+agg <- aggregate(final2$price, list(final2$main_category), mean)
+agg <- arrange(agg, -x)
+
+#most expensive
+agg1 <- head(agg,9)
+
+ggplot(data=agg1, aes(x=reorder(agg1$Group.1, -agg1$x), y=agg1$x)) + geom_bar(stat = "identity",fill="steelblue") +
+  ylab("Mean price") + ggtitle("Price by most expensive Category")+ scale_y_continuous(labels = comma) + xlab("Category")
+
+agg2 <- tail(agg,9)
+
+ggplot(data=agg2, aes(x=reorder(agg2$Group.1, -agg2$x), y=agg2$x)) + geom_bar(stat = "identity",fill="steelblue") +
+  ylab("Mean price") + ggtitle("Price by cheapest Category")+ scale_y_continuous(labels = comma) + xlab("Category")
+```
+
+Na tych wykresach przedstawione zostały kategorie o największej i najmniejszej średniej ceny produktów.
+
+### Zależność `Seller rating` od `number of orders`
+
+```{r  warning=FALSE, message=FALSE, error=FALSE, cache=TRUE,fig.width = 10}
+myFreqs <- final %>% 
+  group_by(seller, it_seller_rating) %>%
+  summarise(Freq = n())
+myFreqs <- arrange(myFreqs, -Freq)
+myFreqs
+
+ggplot(data=myFreqs, aes(x=myFreqs$Freq, y=myFreqs$it_seller_rating)) + geom_point(alpha=0.5) +
+  geom_smooth(method=lm) + scale_y_continuous(labels = comma) + xlab("Number of orders") + ylab("Seller rating") +
+  ggtitle("Seller rating to number of sold products")
+```
+
+Z wykresu wynika, że ocena sprzedawcy i liczba obslużonych przez niego zamówień są ze sobą skorelowane. To dość logiczna zależność i wynika prawdopodobnie z faktu, że klienci ufają bardziej sprzedającym z dobrymi opiniami.
+
+### Gross Merchandise Value
+
+```{r  warning=FALSE, message=FALSE, error=FALSE, cache=TRUE,fig.width = 10}
+final2 <- na.omit(final)
+agg <- aggregate(final2$price, list(final2$main_category), sum)
+agg <- arrange(agg, -x)
+
+#most expensive
+agg1 <- head(agg,7)
+
+
+ggplot(data=agg1, aes(x=reorder(agg1$Group.1, -agg1$x), y=agg1$x)) + geom_bar(stat = "identity",fill="steelblue") +
+  ylab("GMV for day in PLN") + ggtitle("Top biggest GMV by Category")+ scale_y_continuous(labels = comma) + xlab("Category")
+
+agg2 <- tail(agg,7)
+
+ggplot(data=agg2, aes(x=reorder(agg2$Group.1, -agg2$x), y=agg2$x)) + geom_bar(stat = "identity",fill="steelblue") +
+  ylab("GMV for day in PLN") + ggtitle("Top lowest GMV by Category")+ scale_y_continuous(labels = comma) + xlab("Category")
+```
+
+Na tych dwóch wykresach możemy odczytać, które kategorie zamówień przynoszą najwięcej i najmniej zysku.
+
+## Zależność zmiennych z funckją `vis_cor`
+
+```{r  warning=FALSE, message=FALSE, error=FALSE, cache=TRUE,fig.width = 10}
+num <- final %>% select(price, it_is_allegro_standard, it_seller_rating)
+
+vis_cor(num,warn_large_data = FALSE)
+```
+
+Z tego automatycznie wygenerowanego wykresu możemy odczytać korelacje występujące między zmiennycmi `price`, `it_is_allegro_standard` oraz `it_seller_rating`. Akurat dla tej ramki danych nie znalazłem lepszych zastosowań tej funckji.
+
+## Pakiet `dataMaid`
+
+```{r  warning=FALSE, message=FALSE, error=FALSE, cache=TRUE,fig.width = 10}
+check(final)
+visualize(final)
+```
+
+Wyżej wymieniony pakiet pomaga w zautomatyzowaniu przeprowadzania eksploracji dancych, jednak skutkiem ubocznym takiego rozwiązania jest brak wykresów dopracowanych do konkretnych danych i często trudno odczytać informacje z tak powstałych wizualizacji.
+
+
+# Podsumowanie
+
+Pakiety takie jak `dataMaid` czy `datavis` pomagają w automatyzacji przeprowadzania eksploracji danych, jednak większe możliwości i precyzję dają funckje i wykresy napisane z myślą o konkretnym zestawie danych, czego nie da się osiągnąć przy użyciu wcześniej wymienionych pakietów.
