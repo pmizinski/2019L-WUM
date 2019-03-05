@@ -1,0 +1,96 @@
+---
+title: "Transakcje z Allegro - PD1"
+author: "Wojciech Bogucki"
+date: "4 marca 2019"
+output: 
+  html_document:
+    toc: true
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+transactions <- readRDS("transactions.rds")
+transactions_top5 <- readRDS("transactions_top5.rds")
+library(visdat)
+library(dplyr)
+library(ggplot2)
+library(DataExplorer)
+library(knitr)
+library(funModeling)
+```
+
+## Wstępne zapoznanie z danymi
+
+### Szczegóły ramki danych
+Ramka danych została stworzona na podstawie danych dot. transakcji w serwisie Allegro w dniu 3 kwietnia 2016.
+```{r}
+kable(t(introduce(transactions)))
+kable(profiling_num(select(transactions,-item_id, -it_seller_rating)),format = "html")
+```
+
+### Braki danych
+```{r}
+plot_missing(transactions)
+```
+
+Jak widać, ramka danych nie zawiera żadnych braków.
+
+### Zmienne kategoryczne
+```{r}
+a <- freq(select(transactions,main_category_eng))
+b <- freq(select(transactions,it_is_allegro_standard),input = "it_is_allegro_standard")
+c <- freq(select(transactions,it_is_brand_zone),input = "it_is_brand_zone")
+```
+
+5 najpopularniejszych kategorii to Home & Garden, "Clothing, Shoes, Accessories", Automotive, Babies i Beauty. Ponad $58$% produktów jest oznaczone jak Allegro Standard. Tylko $1.67$% produktów jest oznaczonych jako Brand Zone.
+
+## Zależności między danymi kategorycznymi
+```{r}
+cross_plot(data = transactions, input = c( "it_is_allegro_standard"),target = "it_is_brand_zone")
+```
+
+Można zauważyć, że większy odsetek produktów Allegro Standard jest oznaczone jako Brand Zone. Różnica jednak nie jest duża.
+
+## Zależności dla 5 najpopularniejszych kategorii
+```{r}
+cross_plot(data = transactions_top5, input = c("main_category_eng"),target = "it_is_brand_zone")
+cross_plot(data = transactions_top5, input = c( "main_category_eng"),target = "it_is_allegro_standard")
+
+```
+
+Największy odsetek produktów Brand Zone jest w kategoriach Clothing, Shoes, Accessories i Babies($2.6$%). Najmniejszy odsetek produktów Brand Zone mają produkty z kategorii Beauty. 
+Ponad połowa produktów z kategorii Beauty, a dla pozostałych kategorii około $40$% produktów nie jest Allegro Standard.
+
+## Ilość transakcji w ciągu doby
+
+```{r}
+ggplot(transactions,aes(x=date)) + 
+  geom_histogram(binwidth = 900, colour="white") +
+  scale_x_datetime(breaks = seq.POSIXt(as.POSIXct("2016-04-03 00:00:00"),as.POSIXct("2016-04-04 00:00:00"),length.out = 13))+ 
+  coord_flip()
+```
+
+Najwięcej transakcji w dniu 3 kwietnia 2016 było zawieranych około godzin 20 i 23, koło 22 liczba transakcji zdecydowanie spadła. W trakcie dnia dużo transakcji było zawieranych w godzinie lunchu, czyli koło 12.
+
+## 99.99 jest lepsze niż 100
+```{r}
+
+plotar(data = filter(transactions_top5,price>85, price<105), input = "price", target = "main_category_eng", plot_type = "histdens")
+
+plotar(data = filter(transactions_top5,price>20, price<100, main_category_eng=="Clothing, Shoes, Accessories"), input = "price", target = "main_category_eng", plot_type = "histdens")
+```
+
+```{r, echo=FALSE,fig.show='hide'}
+plt <- plot_num(filter(select(transactions,price),price>25, price<145),bins=48)
+plt$labels$x <- "Price"
+
+```
+```{r, echo=FALSE}
+plt
+```
+
+Największe skupienie cen jest przed wielokrotnościami $10$ lub $5$.
+
+##Podsumowanie
+Przedstawione wykresy pokazują ciekawe zależności między zmiennymi jak i własności pojedynczych zmiennych.
+Do wizualizacji użyłem pakietów DataExplorer, funModeling i ggplot2.
