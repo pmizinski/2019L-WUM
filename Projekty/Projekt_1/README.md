@@ -8,6 +8,7 @@ Nowe propozycje tematów: https://docs.google.com/document/d/1sQNqL1e1y1N17oCj0t
 
 Dla użytkowników knitra:
 
+```
 date: "`r format(Sys.time(), '%d - %m - %Y')`"
 output:
   html_document:
@@ -16,5 +17,5 @@ output:
     toc_float: true
     code_folding: hide
     number_sections: true
-
+```
 
