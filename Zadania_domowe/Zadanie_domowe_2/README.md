@@ -1,3 +1,5 @@
 # Zadanie domowe 2
 
-Termin oddania: 12 III 2019 r.
+Zadanie domowe 2 będzie ogłoszone 11 III.  
+
+Termin oddania: 18 III 2019 r.
