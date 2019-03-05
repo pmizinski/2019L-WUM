@@ -1,19 +1,19 @@
 # 2019L-WUM
 Wstęp do uczenia maszynowego - laboratoria
 
-Wstępny plan laboratoriów:
+Plan laboratoriów:
 
 - 19 II 2019 - DataExplorer i mlr. Zajęcia organizacyjne.
 - 26 II 2019 - Pakiet mlr. Eksploracja danych.
-- 5 III 2019 - Wybór projektów.
-- 12 III 2019 - Inżynieria cech  / Projekt I, faza  I - konsultacje.
+- 5 III 2019 - Wybór projektów, eksploracja danych cd.
+- 12 III 2019 - Inżynieria cech / Projekt I, faza  I - konsultacje.
 - 19 IIII 2019 - Klasyfikacja. Ocena klasyfikatorów / Projekt I, faza I - prezentacje.
 - 26 IIII 2019 - Modele klasyfikacyjne / Projekt I, faza II - konsultacje.
 - 2 IV 2019 - Modele klasyfikacyjne cd. / Projekt I, faza II - prezentacje.
 - 9 IV 2019 - Strojenie hiperparametrów / Projekt I, faza III - konsultacje.
 - 16 IV 2019 - Projekt I, faza III - prezentacje.
 - 30 IV 2019 - zajęcia odwołane (zajęcia piątkowe)
-- 7 V 2019 - Klasteryzacja / Projekt II, faza I - prezentacje.
+- 7 V 2019 - Klasteryzacja / Projekt II, faza I - prezentacje. (zastępstwo)
 - 14 V 2019 - Klasteryzacja cd. / Projekt II, faza II - konsultacje.
 - 21 V 2019 - Redukcja wymiaru / Projekt II, faza II - prezentacje.
 - 28 V 2019 - Analiza koszykowa / Projekt II, faza III - konsultacje.
