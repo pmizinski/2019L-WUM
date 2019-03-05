@@ -1,4 +1,4 @@
-# Projekt 1: analiza skupień
+# Projekt 1: klasyfikacja
 
 Proponowane tematy:
 
