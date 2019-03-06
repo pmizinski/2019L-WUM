@@ -1,0 +1,259 @@
+---
+title: "PD1"
+author: "Witold Merkel"
+date: "04 03 2019"
+output:
+  html_document:
+    df_print: paged
+    toc: true
+    toc_float: true
+    code_folding: hide
+    number_sections: true
+lang: pl-PL
+---
+
+```{r setup, include=FALSE, cache=TRUE}
+knitr::opts_chunk$set(echo = TRUE)
+source("code.R")
+```
+
+\newpage
+
+# Wprowadzenie
+W tym dokumencie przeprowadzę eksplorację danych z allegro. Sprawdzę czy są jakieś braki danych albo czy w niektórych danych są niesensowne wartości. Pokażę też na wykresach jak prezentują się konkretne kolumny oraz postaram się znaleźć i zaprezentować jakieś ciekawe zależności. Oprócz eksploracji wykonanej ręcznie, zdecydowałem sie an użycie pakietów DataExplorer oraz visdat do pomocniczej wizualizacji danych z allegro.
+
+# Braki danych
+```{r, echo=FALSE, cache=TRUE}
+as.data.frame(na_in_columns)
+```
+Widzimy, że w każdej kolumnie jest wartość FALSE, co oznacza, że w żadnej kolumnie nie ma brakujących wartości. W znacznym stopniu ułatwi to późniejszą prace z tymi danymi, bo nie będzie trzeba szukać i usuwać tych recordów w których występuje jakiś brak, który mógłby spowodować wystąpienie błędu.
+
+# Ręczna eksploracja pojedyńczych zmiennych
+
+## Kategorie - zmienna kategoryczna
+Na poniższym wykresie przedstawione są kategorie zakupów oraz to ile było tranzakcji w każdej z nich, są one posortowane malejaco.
+```{r, echo=FALSE, cache=TRUE}
+plot1
+```
+
+\newline
+
+Widzimy, że zdecydowanie najwięcej tranzakcji jest w kategorii: "Dom i Ogród", a potem w kategoriach: "Ubrania", "Motoryzacja", "Dzieci". Te pierwsze cztery kategorie stanowią ponad 50% wszystkich zakupów zarejstrowanych w naszy danych. Widzimy też, że były tylko 2 tranzakcje związane z nieruchomościami, może to wynikać z faktu, że prawdopodobnie wtedy w grę wchodzi większa kwota pieniężna.
+
+## Standard - zmienna kategoryczna
+Na poniższym wykresie pokażę ile ze wszyskich zakupów była zgodna ze standardem allegro.
+```{r, echo=FALSE, cache=TRUE}
+plot2
+```
+
+\newline
+
+Widzimy, że większość, ale nie jest to zdecydowana większość sprzedanych artykułów była zgodna z owym standardem.
+
+## Brand Zone - zmienna kategoryczna
+Przedstawię tu ile zamówień jest ze stredy Marek, a ile nie jest.
+```{r, echo=FALSE, cache=TRUE}
+plot3
+```
+
+Łatwo można zauważyć, że zdecydowana większość zamówień nie jest ze strefy Marek.
+
+## Opcje zapłaty - zmienne kategoryczne
+W danych są dwie możliwości zapłaty: zwykły przelew bankowy(transfer) i płatność przy odbierz(delivery), zbadajmy jak się prezentuje ich liczność.
+
+\newline
+
+```{r, echo=FALSE, cache=TRUE}
+plot4
+plot5
+```
+
+\newline
+
+Widać, że większość, była opłacona przy odbiorze oraz kartą bankową.
+
+## Cena - zmienna ciągła
+Najpierw przyjrzyjmy się podsumowaniu matematycznemu wartości występujących w ten zmiennej.
+```{r, echo=FALSE, cache=TRUE}
+price_summary
+```
+
+\newline
+
+Maksymalna kwota zamówienia zdecydowanie odbiega od większości wartości, widać to zarówno z mediany jak i ze średniej arytmetycznej. Z tego, że średnia arytmetyczna jest większa od mediany możemy wnioskować, że zdecydowanie więcej jest niedrogich zamówień niż drogich.
+
+\newline
+
+Przyjrzyjmy się teraz wykresowi który przedstawia to ile jest tranzakcji poniżej kwoty x (podobieństwo do dystrybuanty zmiennej losowej).
+```{r, echo=FALSE, cache=TRUE}
+plot6
+```
+
+\newline
+
+Wykres potwierdza, że zdecydowana większość tranzakcji dotyczy niskich kwot, można z niego odczytać jaka część jest poniżej jakiej kwoty pieniężnej.
+
+## Ocena - zmienna ciągła
+Najpierw przyjrzyjmy się podsumowaniu matematycznemu wartości występujących w ten zmiennej.
+```{r, echo=FALSE, cache=TRUE}
+rating_summary
+```
+
+\newline
+
+Widać z własności przedstawionych w tableii, że zdecydowanie więcej jest ocen o niskiej wartości, ale jest też znaczaca ilość tych o duże, nie tak jak w przypadku ceny, świadczy o tym trzeczy kwartyl. Duża ilość niskich ocen w skali punktowej może wynikać z tego, że ludzie rzadko koszystają ze swoich kont, a co za tym idzie rzadko ktoś im wystawia oceny.
+
+\newline
+
+Przyjrzyjmy się teraz wykresowi gęstości rozkładu i boxplotowy ocen użytkowników.
+
+\newline
+
+```{r, echo=FALSE, cache=TRUE, message=FALSE}
+plot7
+boxplot(data$it_seller_rating, horizontal = TRUE)
+title(main = "Boxplot of user ratings", xlab = "User rating")
+```
+
+\newline
+
+Na wykresie gęstości widać, że zdecydowanie częściej występują watrości z okolic 0, ale też występują wartości większe i to na tyle często, że widać to na wykresie.
+
+## Data - zmienna ciągła
+
+Najpierw przyjrzyjmy się podsumowaniu matematycznemu wartości występujących w ten zmiennej.
+```{r, echo=FALSE, cache=TRUE}
+date_summary
+```
+
+\newline
+
+Widać z wartości konkretnych funkcji, że więcej tranzakcji jest dokonywanych wieczorem oraz to, że stosunkowo mało tranzakcji jest wykonywanych przed południem.
+
+\newline
+
+Przyjrzyjmy się teraz wykresowi gęstości rozkładu ilości zakupów w konkretnej chwili.
+
+\newline
+
+```{r, echo=FALSE, cache=TRUE}
+plot9
+```
+
+\newline
+
+Wykres potwierdza, że zdecydowanie mniej tranzakcji następuje między północą, a 7. Można też zaobserwować spadek aktywności między 21, a 22. Widać też, że przed spadkiem aktywności jak i po spadku występują dwa najbardziej oblegane momenty.
+
+# Ręczna eksploracja dwóch zmiennych
+
+## Jak cena zależy od brand_zone?
+Spójrzmy czy jest różnica w cenach jeżeli podzielimy zakupy na te zestrefy Marek i nie e strefy Marek.
+
+\newline
+
+```{r, echo=FALSE, cache=TRUE}
+price__brand_zone
+```
+
+\newline
+
+Widzimy, że ceny są wyższe w strefie Marek i to nawet o wiele wyższe, natomiast rekordowa cena została zarejstrowana nie w strefie Marek.
+
+## Jak cena zależy od standardu allegro?
+Spójrzmy czy jest różnica w cenach jeżeli podzielimy zakupy na te zgodne ze standardem allegro i te niezgodne.
+
+\newline
+
+```{r, echo=FALSE, cache=TRUE}
+price__standard
+```
+
+\newline
+
+W tym przypadku ciężko jest stwierdzić czy wyższe są ceny produktów zgodnych czy niezgodnych ze standardem. Jest tak, ponieważ pierwszy kwartyl, mediana i drugi kwartyl są niewiele większe w przypadku produktów spełniających standard. Natomiast średnia arytmetyczna i maksimum jest większe w przypadku produktów nie spełniających standardu.
+\newline
+
+# DataExplorer
+W tej sekcji pokażę kilka wykresów i podsumowanie uzyskane dzięki pakietowi DataExplorer.
+
+## Podstawowe informacje o danych
+Tu korzystam z dwóch funkcji: introduce() i plot_intro(), aby dowiedzieć się czegoś więcej o zbiorze danych.
+
+\newline
+
+```{r, echo=FALSE, cache=TRUE}
+data_info_DE
+data_plot_DE
+```
+
+\newline
+
+Z tabeli możemy odczytać wiele pomocnych wartości takich jak ilość brakujących elementów czy ilość rekordów. Wykres wizualizuje te dane, które są zawarte w tabeli oraz ułątwia troche dzięki temu wyobrażenie sobie zależności.
+
+## Porównanie dystrybuant
+Wybrałem dwie zmienne ciągłe, którymi są cena i ocena uzytkownika oraz porównałem je do dystrybuanty rozkładu normalnego. Kropki to obserawcje z naszych wybranych kolumn, a linie to rozkład normalny.
+
+\newline
+
+```{r, echo=FALSE, cache=TRUE, message=FALSE}
+qqplot_DE
+```
+
+\newline
+
+Widać, że nasze dane nie pochodzą z rozkładu zbliżonego do rozkładu normalnego, natomiast mają podobne dystrybuanty, co może oznaczać, że jest to jakiś konkretny rozkład. Tworzy to ciekawy problem znalezienia tego rozkładu.
+
+## Współczynnik korelacji dla wszystkich zmiennych
+Tu pokażę heatmape korelacji różnych zmiennych, będzie można z niej odczytać czy któreś z nich są mocno powiązane.
+
+\newline
+
+```{r, echo=FALSE, cache=TRUE}
+corelation_DE
+```
+
+\newline
+
+Można tu odczytać, które zmienne korelują z innymi, a które są niezależne.
+
+# visdat
+W tej sekcji troche wizualizacji otrzymanych przy pomocy pakietu visdat.
+
+## Podsumowanie danych
+Przy pomocy funkcji vis_dat() można otrzymać podsumowanie mówiące o tym, która zmienna jest jakiego typu oraz ile jest w niej obserwacji.
+
+\newline
+
+```{r, echo=FALSE, cache=TRUE}
+data_plot_VD
+```
+
+\newline
+
+Widzimy, które zmienne są jakiego typu, może to ułatwić wybór statystyk jakie będziemy dla nich sporządzać.
+
+## Brakujące dane
+Przy pomocy funkcji vis_miss() moża zobaczyć jaki procent danych z każdej kolumny to brakujące argumenty i ile procent całości to brakujące dane.
+
+\newline
+
+```{r, echo=FALSE, cache=TRUE, message=FALSE}
+miss_data_VD
+```
+
+\newline
+
+Już wczęsniej pokazaliśmy, że nie ma brakujących danych natomiast w przypadku, gdyby były to tak funkcja bardzo ułatwia ich znajdowanie i ewentualnie może przyśpieszyć proces ich usuwania.
+
+## Porównanie zmiennych
+Przy pomocy vis_compare() moża sprawdzić czy jakieś zmienne przyjmują te same wartości w tych samych wierszach. W tym przypadku podejrzewałem, a z wykresu korelacji się dowiedziałem, że zmienne odpowiadające za rodzaj płatności są powiązane.
+
+\newline
+
+```{r, echo=FALSE, cache=TRUE}
+pay_option_comapre_VD
+```
+
+\newline
+
+Z wykresu możemy odczytać, że dane są lekko powiązane, pokazane też, jest kiedy są takie same, a kiedy inne. Na wykresie dominuje kolor odpowiadający temu, że wartości są takie same. W ten łatwy sposób łatwo określić zależności między zmiennymi.
