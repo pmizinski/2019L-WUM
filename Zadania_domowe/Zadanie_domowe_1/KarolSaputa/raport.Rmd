@@ -1,0 +1,127 @@
+---
+title: "PD1"
+author: "Karol Saputa"
+date: "March 07, 2019"
+output: 
+  html_document:
+    theme: spacelab
+    self_contained: yes
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(mlr)
+library(readr)
+library(dplyr)
+library(DataExplorer)
+library(ggplot2)
+library(kableExtra)
+library(funModeling)
+
+```
+
+# Eksploracja danych - zbiór danych Allegro
+
+## Wstępne przetworzenie danych
+### Załadowanie
+```{r message=FALSE}
+allegro <- readr::read_csv("allegro-api-transactions.csv")
+categories <- readr::read_csv2("allegro-categories-eng.txt")
+joined <- dplyr::left_join(allegro, categories, by = "main_category")
+```
+
+```{r}
+colnames(joined)
+nrow(joined)
+```
+### Braki danych
+Dane w zbiorze są kompletne.
+```{r, results='asis'}
+knitr::kable(t(DataExplorer::introduce(joined)))
+#DataExplorer::plot_missing(joined)
+DataExplorer::plot_correlation(na.omit(joined))
+```
+
+## Liczność kategorii produktów
+```{r message=FALSE}
+joined %>% group_by(main_category) %>% count() %>% arrange(desc(n)) -> df_by_categories
+
+ggplot(df_by_categories) + 
+  geom_bar(aes(x = reorder(main_category, n), y = n), stat = "identity") +
+  theme(axis.text.x = element_text(angle = 90, hjust = 1), axis.title.y = element_blank()) + 
+  coord_flip() +
+  ylab("liczność kategorii")
+  
+joined %>% group_by(main_category) %>% count() %>% arrange(desc(n)) %>% select(main_category) -> main_categories
+(main_categories[1:5, ] -> main_categories)
+joined %>% filter(main_category %in% main_categories$main_category) -> df_main_categories
+
+ggplot(df_by_categories[1:5, ]) + 
+  geom_bar(aes(x = reorder(main_category, n), y = n), stat = "identity") +
+  theme(axis.text.x = element_text(angle = 90, hjust = 1), axis.title.y = element_blank()) + 
+  coord_flip() +
+  ylab("liczność kategorii")
+```
+### Ceny produktów
+```{r}
+(price_summ <- summary(df_main_categories$price))
+boxplot(df_main_categories$price)
+#usuniecie outlierow ceny
+df_main_categories %>% filter(price <= 0.9*price_summ[5]) -> df_cat_price_out
+boxplot(df_cat_price_out$price)
+#logarytm ceny
+df_main_categories_logprice <- df_main_categories
+df_main_categories_logprice$price <- log(df_main_categories_logprice$price)
+summary(df_main_categories_logprice$price)
+boxplot(df_main_categories_logprice$price)
+
+```
+
+
+
+### Price a `is_it_allegro_standard`
+* Aukcje posiadające standard allegro okazywały się tańsze.
+```{r}
+df_main_categories %>% group_by(it_is_allegro_standard) %>% summarise(mean(price)) -> mean_price_by_standard
+mean_price_by_standard
+  df_main_categories %>% group_by(it_is_allegro_standard) %>% summarise(median(price)) -> median_price_by_standard
+median_price_by_standard
+```
+
+
+### `it_is_brand_zone`
+* Wg. dokumentacji API informacja dotyczy tego, czy aukacja została wystawiona w ramach Strefy Marek. Jest to mała część wszystkich aukcji.?
+* Prdukty należące do Strefy Marek są średnio droższe od pozostałych.
+```{r}
+summary(joined$it_is_brand_zone)
+joined %>% group_by(it_is_brand_zone) %>% count -> brand_zone_stat
+brand_zone_stat
+(df_main_categories %>% group_by(it_is_brand_zone) %>% summarise(mean(price)))
+```
+
+### `it_seller_rating`
+```{r}
+#unique(joined$it_seller_rating)
+summary(joined$it_seller_rating)
+df_main_categories %>% group_by(it_seller_rating) %>% summarise(mean(price)) -> mean_price_by_rating
+df_main_categories %>% group_by(it_seller_rating) %>% summarise(mean(price)) -> logmean_price_by_rating
+
+colnames(mean_price_by_rating) <- c("rating", "price")
+colnames(logmean_price_by_rating) <- c("rating", "price")
+logmean_price_by_rating$price <- log(logmean_price_by_rating$price)
+logmean_price_by_rating$rating <- as.numeric(logmean_price_by_rating$rating)
+summary(mean_price_by_rating$price)
+summary(logmean_price_by_rating$price)
+logmean_price_by_rating
+ggplot(mean_price_by_rating) + geom_area(aes(x = rating, y = price)) + labs(title = "Histogram średnich cen dla danej oceny")
+ggplot(logmean_price_by_rating) + geom_area(aes(x = rating, y = price))+ labs(title = "Histogram logarytmu średnich cen dla danej oceny")
+```
+
+### Narzędzie funModeling
+```{r, out.width = '200%'}
+#DataExplorer::plot_boxplot(df_main_categories_logprice)
+funModeling::plot_num(df_main_categories_logprice)
+#funModeling::correlation_table(df_main_categories_logprice, "price") - nie dziala
+cross_plot(data=df_main_categories_logprice, input=c("it_quantity", "it_seller_rating"), target="it_is_allegro_standard")
+
+```
