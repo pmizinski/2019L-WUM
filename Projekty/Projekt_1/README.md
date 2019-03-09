@@ -19,3 +19,5 @@ output:
     number_sections: true
 ```
 
+Dla osób, które wybrały COMPAS, opis zmiennych:
+https://github.com/pseshadri18/compas-recidivism/blob/master/compas_report.Rmd
