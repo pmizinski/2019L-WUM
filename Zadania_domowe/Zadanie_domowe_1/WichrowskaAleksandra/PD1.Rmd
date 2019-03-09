@@ -1,0 +1,92 @@
+---
+title: "Praca domowa nr 1"
+author: Aleksandra Wichrowska
+date: "07/03/2019"
+output: html_document
+---
+
+```{r setup, include=FALSE, echo=FALSE}
+library(stringr)
+library(data.table)
+library(readr)
+library(DataExplorer)
+library(funModeling)
+library(visdat)
+
+setwd("~/Pulpit/Materials/UczenieMaszynowe/PD1")
+data <- read.csv("allegro-api-transactions.csv", head = TRUE, sep = ",")
+categories <- read.csv("allegro-categories-eng.txt", head = TRUE, sep = "\t")
+colnames(categories) <- 'titles'
+names <- str_split_fixed(categories$titles, "; ", 2)
+tables <- data.table(names[,1], names[,2])
+final_data <- merge(data, tables, by.x='main_category', by.y='V1')
+final_data <- final_data[,c("price","it_is_allegro_standard","it_is_brand_zone","it_seller_rating", "date" )]
+```
+
+## Wstęp
+
+W poniższym dokumencie przedstawiam podsumowanie danych dotyczących Allegro. 
+Wykresy oraz podsumowania numeryczne dotyczącą kolumn: price, it_is_allegro_standard, it_is_brand_zone, it_seller_rating i date oraz zależności między nimi.
+
+Poza bazowymi funkcjami użyłam pakietu DataExplorer, funModeling oraz jednej funkcji z pakietu visDat
+
+## Podsumowanie pojedynczych zmiennych
+
+### Funkcja plot_histogram z pakietu DataExplorer
+
+```{r plot_histogram, cache=TRUE, echo=FALSE}
+plot_histogram(final_data)
+```
+
+### Funkcja plot_num z pakietu funModeling
+
+```{r plot_num,warning=FALSE,cache=TRUE, echo=FALSE}
+plot_num(final_data)
+```
+
+### Bazowa funkcja summary
+
+Funkcja przedstawia podsumowanie zmiennych numerycznych. 
+Zwraca m.in wartości minimum, maksimum oraz średniej dla każdej kolumny.
+
+```{r summary1, cache=TRUE}
+summary(final_data)
+```
+
+### Funkcja df_status z pakietu funModeling
+
+Funkcja zwraca ilość i procent wartości zerowych dla każdej kolumny oraz ilość unikalnych wartości w kolumnie.
+
+```{r summary2, cache=TRUE}
+df_status(final_data)
+```
+
+Po wyniku tej funkcji oraz wcześniejszych wykresach możemy zaobserwować, że zmienne it_is_brand_zone oraz it_is_allegro_standard przyjmują jeydnie wartości 0 i 1.
+
+## Zmienna price
+
+```{r boxplot, echo=FALSE, cache=TRUE, warning=FALSE}
+boxplot(final_data$price)
+```
+
+Spróbujmy przedstawić wykres tej zmiennej w skali logarytmicznej.
+
+```{r price, echo=FALSE, warning=FALSE, cache=TRUE}
+ggplot(final_data, aes(x = final_data$price)) + geom_histogram() + scale_y_log10() + labs(x="Price", y = "Log(count)", title= "Price")
+```
+
+## Zmienna data
+
+Przyjrzyjmy się ilości ofert w zależności od pory dnia (godziny).
+```{r data2, warning=FALSE, echo= FALSE, cache=TRUE}
+ggplot(final_data, aes(x = format(strptime(x = date, format = "%Y-%m-%d %H:%M:%S"), format = "%H"))) + geom_histogram(stat = "count") + labs(x="Time (hour)", y = "Count",title= "")
+```
+
+## Zależności między zmiennymi przy użyciu pakietu visDat
+
+Funkcja vis_cor przedstawia stopień korelacji pomiędzy poszczególnymi zmiennymi.
+
+```{r corr1, warning=FALSE, cache=TRUE}
+vis_cor(final_data[, c("it_is_allegro_standard","it_is_brand_zone","price","it_seller_rating")])
+```
+

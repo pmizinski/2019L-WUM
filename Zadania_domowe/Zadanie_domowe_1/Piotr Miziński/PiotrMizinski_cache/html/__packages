@@ -1,0 +1,7 @@
+base
+dplyr
+ggplot2
+ggthemes
+scales
+bindrcpp
+visdat
