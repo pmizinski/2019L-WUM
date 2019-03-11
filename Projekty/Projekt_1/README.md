@@ -2,7 +2,7 @@
 
 Proponowane tematy:
 
-Propozycje tematów z zeszłych lat: https://docs.google.com/document/d/1kTyfdKqY1N65mhAEY2Ondh0tS7W046suiFzgxj0vVkM/edit?usp=sharing
+Propozycje tematów z zeszłych lat, zasady dotyczące projektów i wskazówki: https://docs.google.com/document/d/1kTyfdKqY1N65mhAEY2Ondh0tS7W046suiFzgxj0vVkM/edit?usp=sharing
 
 Nowe propozycje tematów: 
 
@@ -19,7 +19,7 @@ Nowe propozycje tematów:
 
 
 
-Dla użytkowników knitra:
+Dla użytkowników knitra - sensowne ustawienia:
 
 ```
 date: "`r format(Sys.time(), '%d - %m - %Y')`"
