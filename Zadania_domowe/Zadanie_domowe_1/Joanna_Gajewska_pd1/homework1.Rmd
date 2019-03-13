@@ -1,0 +1,196 @@
+---
+title: "homework 1"
+author: "Joanna Gajewska"
+date: "7 March 2019"
+output: html_document
+editor_options: 
+  chunk_output_type: console
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## Wstęp
+
+Zadanie jakie należało wykonać polegało na przeprowadzeniu eksploracji danych jake otrzymano z API Allegro, zebranych w ciągu jednego dnia. W raporcie przedstawiono korelacje między cechami jakimi operowano.
+
+
+
+
+
+```{r, r , echo=FALSE, include=FALSE, warning=FALSE, message=FALSE, error=FALSE}
+
+library(tidyverse)
+library(lubridate)
+library(DataExplorer)
+library(visdat)
+library(rmarkdown)
+
+allegro<-read.csv(file="allegro-api-transactions.csv", sep=",")
+allegroTxt<-read.csv(file = "allegro-categories-eng.txt", sep = ";")
+allegroCsv<- merge(x = allegro, y = allegroTxt, by.x = "main_category", by.y = "main_category", all.x = TRUE)
+
+```
+#Wstępne przedstawienie danych 
+
+Nazwy zmiennych:
+```{r, echo=FALSE}
+colnames(allegroCsv)
+```
+
+#Ogólne przedstawienie danych ilościowych
+
+Cena:
+```{r, echo=FALSE}
+summary(allegroCsv$price)#numerci
+
+```
+
+Ilość sprzedanych produktów:
+```{r, echo=FALSE}
+summary(allegroCsv$it_quantity)#intiger
+```
+
+Popularność sprzedawców:
+```{r, echo=FALSE}
+summary(allegroCsv$it_seller_rating)#intiger
+```
+
+#Poprawność danych
+```{r  echo=FALSE}
+
+plot_missing(allegroCsv, title = NULL, ggtheme = theme_gray(),theme_config = list(legend.position = c("bottom")))
+
+
+```
+
+
+Z powyższego wykresu widać, że dane są kompletne.
+
+#Korelacje cech
+```{r , echo=FALSE}
+allegroCsv$date<-as.POSIXct(allegroCsv$date)
+corelation <-allegroCsv%>% select(it_seller_rating, it_quantity, pay_option_transfer, price)
+visdat::vis_cor(corelation ,warn_large_data = FALSE)
+
+```
+
+Na wykresie można zauważyć znikomą zależność między ilością ocen jakie otrzymał sprzedawca od
+możliwości płacenia przez transfer. Sprzedawcy umożliwiający płatność online cieszą się większą popularnością.
+
+
+#Badanie zależności ilości sprzedanych produktów od ich cen
+
+W pierwszym kroku wykonano podział w kontekście cen. W przedziale 0-100 zł zawiera się ponad 75 % sprzedanych produktów. 
+
+```{r, echo=FALSE, message=FALSE}
+
+lowPrice<-filter(allegroCsv, allegroCsv$price < 100)
+# /sum(lowPrice$it_quantity)*100
+# Pani sobie poprawi
+ggplot(mapping = aes_(x=lowPrice$price, y=lowPrice$it_quantity)) + 
+  geom_smooth(aes(color=..y..), size=1.5, se=T ) +
+  scale_colour_gradient2(low = "blue", mid = "yellow" , high = "red",midpoint=median(allegroCsv$it_quantity)) +
+  theme_bw() +
+  xlab("Cena [zł]") +
+  ylab("procentowa ilość sprzedanych produktów") +
+  ggtitle("Zależność ilości sprzedanych produktów od ceny (w zakresie 0-100zł)")+
+  theme(legend.position = "none")
+```
+
+
+Poniżej przedstawiono wykres z zakresu cenowego 100-500 zł, gdyż jest to przedział
+w którym się mieści nieco ponad 75 % pozostałych sprzedanych produktów.
+
+```{r, echo=FALSE, message=FALSE}
+highPrice<-filter(allegroCsv, allegroCsv$price > 100, allegroCsv$price < 500)
+
+ggplot(mapping = aes_(x=highPrice$price, y=highPrice$it_quantity)) +
+  geom_smooth(aes(color=..y..), size=1.5, se=T) +
+  scale_colour_gradient2(low = "blue", mid = "blue" , high = "pink",midpoint=median(allegroCsv$it_quantity)) +
+  theme_bw() +
+  xlab("Cena [zł]") +
+  ylab("Ilość sprzedanych produktów") +
+  ggtitle("Zależność ilości sprzedanych produktów od ceny (w zakresie 100-500zł)") +
+  theme(legend.position = "none")
+
+```
+
+Analizując powyższe wykresy, można zauważyć, iż dużą popularnością cieszą się szczegównie produkty w cenach poniżej 100 zł, zwłaszcza w przedziale od najniższych cen do ~40 zł.
+
+Dla drugiego zakresu (100-500zł) ewidentnie widać skok dla wartości produktów wynoszącej 300 zł. 
+
+#Badanie zależności ilości sprzedanych produktów od ich kategorii z uwzględnieniem czy dany produkt jest w standardzie allegro.
+
+
+```{r, echo=FALSE}
+categoryQuantityStandard<-aggregate(allegroCsv$it_quantity, 
+by=list(allegroCsv$it_is_allegro_standard, allegroCsv$main_category), FUN=sum)
+
+ggplot(mapping = aes_(x=categoryQuantityStandard$Group.2,  y=categoryQuantityStandard$x/sum(categoryQuantityStandard$x), fill=as.factor(categoryQuantityStandard$Group.1)))+
+geom_bar(stat = "identity")+
+scale_fill_discrete(labels=c("nie", "tak"), name="standard allegro")+
+theme(axis.text.x = element_text(angle = 90, hjust = 1))+ 
+scale_y_continuous(labels=scales::percent)+
+xlab(" ")+
+ylab("procentowa ilość sprzedanych produtktów ")+
+ggtitle("Wykres zależności ilości kupionych produktów od ich kategorii")
+
+
+```
+
+
+Jak widać z powyższego wykresu największą popularnością cieszy się kategoria Dom i Ogród, kolejno Uroda, Telefony i Akcesoria. 
+Ilość sprzedanych produktów jest umiarkowanie podzielona względem tego czy zwierają się w standardzie allegro czy nie.
+
+
+#Badanie zależności ilości sprzedanych produktów od popularności sprzedawców z uwzględnieniem opcji płatności
+
+
+```{r, echo=FALSE, warning=FALSE}
+
+sellersQuantity<-aggregate(allegroCsv$it_quantity, by=list(allegroCsv$seller, allegroCsv$it_seller_rating, allegroCsv$pay_option_on_delivery, allegroCsv$pay_option_transfer), FUN=sum)
+
+sellersQuantity$Group.4<-sellersQuantity$Group.4*2
+# 1-płacenieprzy dostawie, 2-płacenie nline, 3-oba sposoby płątności dostępne
+sellersQuantity$paying_options<-sellersQuantity$Group.3+sellersQuantity$Group.4
+
+sellersQuantity<-filter(sellersQuantity, x>0,  x< 20013944 )
+
+
+ggplot(mapping = aes_(x= sellersQuantity$Group.2, y=sellersQuantity$x/sum(sellersQuantity$x)*100, color=as.factor(sellersQuantity$paying_options )))+
+geom_point()+
+scale_y_continuous(labels=scales::percent)+
+xlab("popularność sprzedawcy ")+
+ylab("procentowa ilość sprzedanych produtktów ")+
+ggtitle("Wykres zależności ilości kupionych produktów od popularności sprzedawcy") +
+scale_x_log10(labels = function(x) format(x, big.mark = " ", scientific = FALSE))+
+scale_color_discrete(labels=c("Nieokreślony", "Transfer", "Przy odbiorze", "Obie opcje"), name="Możliwy sposób płatności")
+
+```
+
+
+Jak widać z powyższego wykresu, najwięcej produktów (w nie wielkich ilościach) było kupowanych z możliwością obu opcji płątności, rzadkością są produkty które mają jedynie jedną możliwość zapłaty. Istnieją również takie, dla których sposób płacenia nie został określony. Z wykresu wynika, że takie były kupowane w największych ilościach jednorazowo. 
+
+#Badanie zależności ilości kupionych produktów od godziny
+
+```{r, echo=FALSE}
+allegroCsv$date<-as.POSIXct(allegroCsv$date)
+
+ndf <- allegroCsv %>% 
+  group_by(time = lubridate::hour(date)) %>% 
+  summarise(prods = sum(it_quantity)) %>% 
+  mutate(prods = 100 * prods / sum(prods))
+
+ndf %>% ggplot(mapping =  aes(x=time, y=prods)) +
+  geom_col()+
+  scale_x_continuous(name="Czas [h]", breaks=seq(0, 23, 1))+
+  ylab("procentowa ilość sprzedanych produktów")+
+  ggtitle("Wykres zależności ilości sprzedanych produktów od pory dania")
+  
+
+
+```
+
+Analizując powyższy wykres widać, że najczęściej klienci robią zakupy w godzinach popołudniowych, a w szczegówności wieczornych. Dla godziny 20 otrzymano najwyższy wynik sprzedanych produktów.

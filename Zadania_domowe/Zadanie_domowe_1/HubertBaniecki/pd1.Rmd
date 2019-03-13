@@ -1,0 +1,218 @@
+---
+title: "HubertBanieckiPd1"
+author: "Hubert Baniecki"
+date: "6 03 2019"
+output:
+  html_document:
+    df_print: paged
+    toc: true
+    toc_float: true
+    code_folding: hide
+    number_sections: true
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(readr)
+library(dplyr)
+library(ggplot2)
+library(knitr)
+library(visdat)
+library(DataExplorer)
+library("kableExtra")
+library("scales")
+require(gridExtra)
+library("funModeling")
+
+enc <- guess_encoding("allegro-api-transactions.csv", n_max = 10000)[[1]]
+allegroApiTransactions <- as.data.frame(read_csv("allegro-api-transactions.csv", locale = locale(encoding = enc[1])))
+allegroCategoriesEng <- as.data.frame(read_delim("allegro-categories-eng.txt", delim=";"))
+data <- full_join(allegroApiTransactions, allegroCategoriesEng)
+data <- data[,-dim(data)[2]]
+```
+
+# Wstęp
+
+W tej pracy domowej przejrzę dataset zakupów zrobionych w serwisie Allegro podczas jednego dnia. Najpierw zobaczę czym charakteryzuje się cały zbiór danych oraz poszczególne zmienne. Dalej poszukam zależności pomiędzy zmiennymi oraz innych ciekawych obserwacji. W tym zadaniu, poza pakietami **dplyr** i **ggplot2**, użyję pakietów **visdat**, **funModeling** oraz **DataExplorer**.
+
+# Dane
+
+Na dane składa się ponad 420 tysięcy zakupów.<br/>
+Każdy z nich opisany jest przez 14 zmiennych: 5 dyskretnych oraz 9 ciągłych.<br/>
+W całym zbiorze danych nie ma żadnych brakujących wartości.<br/>
+Wyróżniającymi się zmiennymi są `data` oraz `lp`, czyli unikalny id zakupu. Możemy go dalej pominąć. 
+
+```{r  fig.width=6, fig.height=3,fig.align='center'}
+kable_styling(kable(t(as.matrix(introduce(data))), col.names="", format = "html"), bootstrap_options = "striped", full_width = F)
+vis_dat(data, warn_large_data=FALSE, palette = "default")
+```
+```{r echo=TRUE}
+isTRUE(length(data$lp)==dim(data)[1])
+data <- select(data, -lp)
+```
+
+
+# Zmienne
+
+## date
+
+Pierwszą interesującą zmienną w zbiorze danych jest `date`. Jak możemy zauważyć, dane pochodzą z jednego pełnego dnia.<br/>
+Widać bardzo mało transakcji w nocy, stałą ilość w trakcie dnia oraz zaskakujący wzrost do godziny 21.<br/>
+Ciężko stwierdzić co może powodować mało zakupów o 22 oraz bardzo dużo zakupów o 23.
+```{r  fig.width=8, fig.height=4,fig.align='center'}
+kable_styling(kable(t(as.matrix(as.character(summary(data$date))))), bootstrap_options = "striped", full_width = F)
+
+ggplot(data, aes(x=as.POSIXct(data$date,format="%H:%M"))) + 
+    geom_histogram( fill="lightblue", binwidth = 15*60,color="grey50") + xlab("date")
+
+```
+
+## categories i main_category
+
+Zmienna `categories` przechowuje kilka kategorii dla każdego zakupu, a `main_category` to kategoria główna. <br/>
+Ogólnie kategorii jest 6758, a kategorii głównych 27. Każda z kategorii głównych pojawia się w kategoriach. <br/>
+Poniżej 27 najliczniejszych zliczonych kategorii oraz kategorii głównych.
+```{r}
+categoriesAll <- unlist(lapply(data$categories, function(x) unlist(strsplit(x,"'"))[c(FALSE,TRUE)]))
+categoriesUnique <- unique(categoriesAll)
+mainCategoriesUnique <- unique(data$main_category)
+```
+```{r}
+length(categoriesUnique)
+length(mainCategoriesUnique)
+all(mainCategoriesUnique %in% categoriesUnique)
+```
+
+```{r}
+categoriesCount <- arrange(as.data.frame(table(categoriesAll)), Freq)
+categoriesCount$categoriesAll <- factor(categoriesCount$categoriesAll, levels=categoriesCount$categoriesAll)
+
+mainCategoriesCount <- arrange(as.data.frame(table(data$main_category)), Freq)
+mainCategoriesCount$Var1 <- factor(mainCategoriesCount$Var1, levels=mainCategoriesCount$Var1)
+```
+```{r fig.width=4, fig.height=5,echo=FALSE,out.extra='style="float:left"'}
+ggplot(data = mainCategoriesCount, aes(x = Var1, y = Freq)) +
+    geom_bar(stat = "identity", width = .75, fill="lightblue") + coord_flip() + xlab("main_categories") + ylab("count")
+```
+```{r fig.width=4, fig.height=5,echo=FALSE,out.extra='style="float:right"', warning=FALSE}
+ggplot(data = top_n(categoriesCount, 27, Freq), aes(x = categoriesAll, y = Freq)) +
+    geom_bar(stat = "identity", width = .75, fill="lightblue") + coord_flip() + xlab("categories") + ylab("count")
+```
+
+Wśród 27 najliczniejszych wyników dla obu grup powtarza się 11. Możemy je nazwać definitywnie najpopularniejszymi.
+```{r}
+temp <- mainCategoriesUnique %in% top_n(categoriesCount, 27, Freq)$categoriesAll
+length(which(temp))
+mainCategoriesUnique[temp]
+```
+
+## seller, it_location i item_id
+
+Są to kolejne zmienne kategoryczne mające mocno skośne rozkłady. <br/>
+Możemy znaleźć najpopularniejsze produkty, sprzedawców lub ich lokalizacje. <br/>
+Zgodnie z oczekiwaniami, będą to największe miasta w Polsce oraz sklepy internetowe.
+```{r fig.width=10, fig.height=12,fig.align='center'}
+seller <- arrange(as.data.frame(table(data$seller)), Freq)
+seller$Var1 <- factor(seller$Var1, levels = seller$Var1)
+plot11 <- ggplot(data = top_n(seller, 15, Freq), aes(x = Var1, y = Freq)) +
+    geom_bar(stat = "identity", width = .75, fill="lightblue") + coord_flip() + xlab("seller") + ylab("count")
+
+it_location <- arrange(as.data.frame(table(data$it_location)), Freq)
+it_location$Var1 <- factor(it_location$Var1, levels = it_location$Var1)
+plot21 <- ggplot(data = top_n(it_location, 15, Freq), aes(x = Var1, y = Freq)) +
+    geom_bar(stat = "identity", width = .75, fill="lightblue") + coord_flip() + xlab("it_location") + ylab("count")
+
+item_id  <- arrange(as.data.frame(table(data$item_id )), Freq)
+item_id $Var1 <- factor(item_id $Var1, levels = item_id $Var1)
+plot31 <- ggplot(data = top_n(item_id , 15, Freq), aes(x = Var1, y = Freq)) +
+    geom_bar(stat = "identity", width = .75, fill="lightblue") + coord_flip() + xlab("item_id") + ylab("count")
+
+
+seller <- as.data.frame(table(data$seller))$Freq
+it_location <- as.data.frame(table(data$it_location))$Freq
+item_id <- as.data.frame(table(data$item_id))$Freq
+
+plot12 <- ggplot(data = NULL) + geom_boxplot(aes(y=seller)) + scale_y_log10() + ylab("log scale count") +
+  theme(axis.title.x=element_blank(),
+        axis.text.x=element_blank(),
+        axis.ticks.x=element_blank())
+plot22 <- ggplot(data = NULL) + geom_boxplot(aes(y=it_location)) + scale_y_log10() + ylab("log scale count") +
+  theme(axis.title.x=element_blank(),
+        axis.text.x=element_blank(),
+        axis.ticks.x=element_blank())
+plot32 <- ggplot(data = NULL) + geom_boxplot(aes(y=item_id)) + scale_y_log10() + ylab("log scale count") +
+  theme(axis.title.x=element_blank(),
+        axis.text.x=element_blank(),
+        axis.ticks.x=element_blank())
+
+grid.arrange(plot11, plot12, plot21, plot22, plot31, plot32, ncol=2,nrow=3)
+```
+
+## Pozostałe zmienne kategoryczne
+
+Większość produktów kupowana jest za pobraniem i mało kto płaci gotówką. <br/>
+Tylko trochę ponad połowa produktów spełnia standard Allegro. Prawie wszystkie są ze strefy Marek.
+
+```{r fig.width=5, fig.height=3,  warning=FALSE,fig.align='center'}
+a <- select(data, pay_option_on_delivery, pay_option_transfer, it_is_allegro_standard, it_is_brand_zone)
+a$pay_option_on_delivery <- as.character(a$pay_option_on_delivery)
+a$pay_option_transfer <- as.character(a$pay_option_transfer)
+a$it_is_allegro_standard <- as.character(a$it_is_allegro_standard)
+a$it_is_brand_zone <- as.character(a$it_is_brand_zone)
+freq(a)
+```
+
+
+## Pozostałe zmienne numeryczne
+
+Dominują niskie ceny, chociaż coś kosztowało ponad 100 000 zł. Analiza wykazuje, że są to auta.<br/>
+Najwięcej sprzedawanych jest pojedyńczych sztuk produktów. Jest jakaś grupa produktów sprzedawana po 99 999 sztuk dziennie i nie ma ona konkretnej kategorii, lokalizacji, czy ceny. Sprzedają te produkty głównie duże sklepy.<br/>
+**Mogą to być oszuści, kupujący swoje produkty, żeby podbić ich pozycjonowanie w serwisie Allegro.**<br/>
+**Taka prawidłowość została zbadana na Amazonie już dawno.**<br/>
+Gęstość ratingu sprzedawców wydaje się być sensowna. Najlepszym sprzedawcom jest sklep x-kom.
+
+```{r fig.width=10, fig.height=4,  warning=FALSE,fig.align='center'}
+b <- select(data, price, it_quantity, it_seller_rating)
+plot_num(b, bins=10)
+
+x <- top_n(data,6,price)
+y <- top_n(data,6,it_quantity)
+z <- top_n(data,6,it_seller_rating)
+x
+head(y)
+z
+```
+
+# Korelacje 
+
+`seller_rating` jest lekko powiązany z `pay_option_on_delivery` oraz `is_allegro_standard`.<br/>
+`is_allegro_standard` jest powiązany z `pay_option_on_delivery` oraz `pay_option_transfer`.<br/>
+`date` zdaje się nie mieć wpływu na żadną z zmiennych.
+```{r fig.width=6, fig.height=7,  warning=FALSE,fig.align='center'}
+temp <- data
+temp$date <- as.numeric(temp$date)
+plot_correlation(temp, maxcat = 10L)
+```
+```{r fig.width=7.5, fig.height=6,  warning=FALSE,fig.align='center'}
+vis_cor(select(temp,date,it_seller_rating,it_is_brand_zone,it_quantity, it_is_allegro_standard,price,pay_option_transfer,pay_option_on_delivery))
+```
+
+Wydaje mi się, że DataExplorer lepiej poradził sobie z plotem korelacji niż visDat.
+
+# Pozostałe
+
+Ktoś postanowił kupić nieruchomość przed północą i nikt nie kupił biletów w nocy.
+
+```{r warning=FALSE}
+ggplot(data, aes(x=main_category, y=date)) + geom_boxplot() + coord_flip()
+```
+
+Najdroższe na Allegro są samochody i części do nich. Potem komputery, aparaty, telefony i konsole.
+
+```{r warning=FALSE}
+ggplot(data, aes(x=main_category, y=price)) + geom_boxplot() + coord_flip() + scale_y_log10()
+```
+
+# Podsumowanie
+
+Ogólnie w każdym z pakietów można znaleźć przydatne funkcje, które szybko i sensownie zrobią za nas dużą część pracy. Łatwo w ten sposób znaleźć liczby opisujące cały zbiór danych, rozkłady zmiennych, czy korelacje. Jeżeli chcemy dowiedzieć się czegoś szczególnego, to pozostaje nam napisanie własnego kodu.

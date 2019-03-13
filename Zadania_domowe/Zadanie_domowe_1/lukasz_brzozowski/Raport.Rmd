@@ -1,0 +1,206 @@
+---
+title: "Eksploracja danych - PD1"
+author: "Łukasz Brzozowski"
+date: "7 marca 2019"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+source("code.R")
+```
+
+#Zbiór danych
+
+Pracujemy na zbiorze **allegro-api-transactions** zawierającym dane o transakcjach na portalu Allegro wykonanych 3 kwietnia 2016 roku.
+```{r show_data, cache = TRUE}
+head(dat, 2)
+```
+
+#Rozkłady danych
+Poniżej prezentuję wybrane rozkłady danych w poszczególnych kolumnach:
+
+###date
+
+```{r date, cache = TRUE, echo = FALSE}
+ggplot(data = ready_dates, aes(x = ymd_hms(X1), y = n)) +
+  geom_area(fill = "lightgreen", color = "black") +
+  labs(title = "Sumaryczna liczba transakcji w ciągu dnia",
+       x = "Godzina",
+       y = "Liczba transkacji")
+```
+
+Transakcje wykonywane są głównie w ciągu dnia, kiedy widzimy prawie liniowy przyrost z niewielkim zaburzeniem wieczorem.
+
+###price
+
+```{r price, cache= TRUE, echo = FALSE}
+ggplot(data = dat, aes(x = price)) +
+  geom_histogram(aes(y=..count..), color="black", fill="blue", alpha=0.3) + 
+  scale_x_continuous(breaks=c(0,1,2, 5,10,50,100, 200, 500, 1000, 2000, 5000, 20000, 50000), trans="log1p", expand=c(0,0)) +
+  labs(title = "Rozkład cen kupowanych produktów",
+       x = "Cena",
+       y = "Liczba transkacji")
+summarize(dat$price)
+
+```
+Najchętniej kupowane są produkty z przedziału 10-50 złotych. Pojawia się też niewielki odsetek produktów o bardzo wysokich cenach.
+
+###it_quantity
+
+```{r, cache = TRUE, echo = FALSE}
+ggplot(data = dat, aes(x = it_quantity)) +
+  geom_histogram(aes(y=..count..), color="black", fill="green", alpha=0.3) + 
+  scale_x_continuous(breaks=c(0,1,2, 5,10,50,100, 200, 500, 1000, 2000, 5000, 20000, 50000), trans="log1p", expand=c(0,0)) +
+  labs(title = "Rozkład liczby produktów",
+       x = "Liczba produktów",
+       y = "Liczba transkacji")
+summarize(dat$it_quantity)
+```
+
+Mamy do czynienia z bardzo nietypowym rozkładem. Możemy zaobserwować znacznie odstające liczby produktów równe 0 oraz bliskie 1000, a nawet wynoszące prawie 100 tysięcy.
+
+###it_seller_rating
+
+```{r, cache = TRUE, echo = FALSE, warning=FALSE}
+ggplot(data = dat, aes(x = it_seller_rating)) +
+  geom_histogram(aes(y=..count..), color="black", fill="blue", alpha=0.3, bins = 40) + 
+  scale_x_continuous(breaks=c(0,1,2, 5,10,50,100, 200, 500, 1000, 2000, 5000, 20000, 50000, 100000, 200000), trans="log1p", expand=c(0,0),
+                     labels = c(0,1,2, 5,10,50,100, 200, 500, 1000, 2000, 5000, 20000, 50000, "100000", "200000")) +
+  theme(axis.text.x = element_text(angle=20)) +
+  labs(title = "Rozkład punktów sprzedawców",
+       x = "Liczba punktów",
+       y = "Liczba transkacji")
+  summarize(dat$it_seller_rating)
+```
+
+Większość sprzedawców osiągnęła wynik między 2 tys. a 30 tys. punktów. Możemy również zauważyć sprzedawców dopiero rozpoczynających sprzedaż oraz tych z olbrzymią liczbą punktów.
+
+###it_location
+
+```{r, cache = TRUE, echo = FALSE}
+ggplot(data = ready_cities, aes(x = cities, y = Freq)) +
+  geom_bar(stat = "identity", fill = "pink", alpha = 0.7) +
+  labs(title = "Najczęstsze lokalizacje produktów",
+       x = "Miasta",
+       y = "Liczba transkacji") +
+  coord_flip()
+summarize(dat$it_location)
+```
+Powyżej przedstawiam dziesięć najczętszych lokalizacji. Sprzedaże produktów z tych miast stanowią prawie 24% wszystkich wykonanych sprzedaży. 
+
+```{r c_part}
+cities_part
+```
+Warto jednak zwrócić uwagę na dużą liczbę wartości unikalnych - świadczy to o zauważalnym zanieczyszczeniu danych, ponieważ sprzedawcy w różny sposób wpisują te same miasta lub lokalizacje (lub wpisują zupełnie inne dane). Przykładowo:
+```{r example, cache = TRUE, echo = FALSE}
+example
+```
+###main_category
+
+```{r, cache = TRUE, echo = FALSE}
+ggplot(data = ready_categories, aes(x = categories, y = Freq)) +
+  geom_bar(stat = "identity", fill = "darkblue") +
+  theme(axis.text.x = element_text(angle=45, margin = margin(t = 10))) +
+  labs(title = "Rozkład kategorii produktów",
+       x = "Kategorie",
+       y = "Liczba transkacji") +
+  coord_flip()
+summarize(dat$main_category)
+```
+
+Jak widzimy, zdecydowanie najczęściej kupowane były produkty z kategorii "Dom i Ogród", co prawdopodobnie wynika z faktu, że dane pochodzą z wczesnej wiosny, czyli sezonu kupowania roślin oraz wzmożonej rearanżacji wnętrz.
+
+
+## Rozkłady pozostałych danych
+
+Poniżej prezentuję rozkłady danych jedną z dwóch wartości. Nie możemy wywnioskować z samych tych rozkładów niczego szczególnie ciekawego, ale mogą posłużyć za wskazówki do poszukiwania korelacji między danymi.
+
+###it_is_allegro_standard
+
+```{r standard, cache = TRUE, echo = FALSE}
+ggplot(data = dat, aes(x = it_is_allegro_standard)) +
+  geom_bar(fill = "coral") +
+  labs(title = "Standard Allegro sprzedawcy",
+       x = "",
+       y = "Liczba transkacji")
+```
+
+
+###pay_option_on_delivery
+
+```{r pay_option, cache = TRUE, echo = FALSE}
+ggplot(data = dat, aes(x = pay_option_on_delivery)) +
+  geom_bar(fill = "lightpink") +
+  labs(title = "Wybrany rodzaj zapłaty za pobraniem",
+       x = "",
+       y = "Liczba transkacji")
+```
+
+###pay_option_transfer
+
+```{r pay_option_tr, cache = TRUE, echo = FALSE}
+ggplot(data = dat, aes(x = pay_option_transfer)) +
+  geom_bar(fill = "lightblue") +
+  labs(title = "Wybrany rodzaj zapłaty przez Internet",
+       x = "",
+       y = "Liczba transkacji")
+```
+
+# Poprawność danych
+
+```{r check_data, cache = TRUE}
+check(dat)
+```
+
+Pakiet **dataMaid** znalazł dużą liczbę wartości odstających w dacie, liście kategorii, lokalizacji i nazwach sprzedawców, co wynika z dużej unikalności tych danych. Warto zwrócić uwagę jednak na kolumny cen, oceny sprzedawców oraz liczby produktów, które mają duże liczby wartości odstających pomimo ciągłego rozkładu. Poza tym ponownie możemy zauważyć znaczną liczbę nieporawnych danych w kolumnie lokalizacji. W zbiorze nie są jednak obecne braki danych.
+
+```{r isna}
+sapply(dat, function(x) sum(is.na(x)) + sum(is.nan(x)) + sum(is.null(x)))
+```
+
+# Korelacje danych
+Poniżej prezentuję wybrane korelacje między danymi zawartymi w zbiorze
+
+### Godzina a cena
+```{r hour_price, echo = FALSE, cache = TRUE, warning=FALSE, message=FALSE}
+ggplot(data = dat, aes(x = ymd_hms(date), y = price)) +
+  geom_smooth() +
+  labs(title = "Zależność pomiędzy porą dnia a ceną kupowanych produktów",
+       x = "Godzina",
+       y = "Średnia cena")
+```
+
+Powyżej możemy zauważyć zależność średniej ceny kupowanych produktów od pory dnia. W nocy wariancja cen jest największa, ale też pamiętajmy, że transakcji jest o wiele mniej. Pomiędzy 7:00 a 23:00, widzimy średnio stałą cenę produktu, jednak pojawia się znaczny spadek przed południem oraz znaczy wzrost późnym wieczorem.
+
+### Wynik sprzedawcy a cena
+```{r seller_price, cache = TRUE, echo = FALSE, warning=FALSE, message = FALSE}
+ggplot(data = dat, aes(x = it_seller_rating, y = price)) +
+  geom_smooth() +
+  scale_x_continuous(breaks=c(0,1,2, 5,10,50,100, 200, 500, 1000, 2000, 5000, 20000, 50000, 100000, 200000), trans="log1p", expand=c(0,0),
+                     labels = c(0,1,2, 5,10,50,100, 200, 500, 1000, 2000, 5000, 20000, 50000, "100000", "200000")) +
+  theme(axis.text.x = element_text(angle=20)) +
+  labs(title = "Zależność pomiędzy wynikiem sprzedawcy a ceną kupowanych produktów",
+       x = "Liczba punktów sprzedawcy",
+       y = "Średnia cena")
+```
+
+Widzimy tutaj, że sprzedawcy, których wyniki są najczęstsze (z przedziału 2-30 tys. punktów) oferują średnio najtańsze produkty. Oficjalne duże sklepy oraz osoby sprzedające okazjonalnie mają średnio wyższe ceny.
+
+### Cena a lokalizacja
+```{r locprice, cache = TRUE, echo = FALSE, warning = FALSE, message = FALSE, fig.width=8}
+ggplot(data = dat[dat$it_location %in% ready_cities[,1],], aes(x = price)) +
+  geom_histogram(aes(y=..count..), color="black", fill="blue", alpha=0.3) + 
+  scale_x_continuous(breaks=c(0,1,2, 5,10,50,100, 200, 500, 1000, 2000, 5000, 20000, 50000), trans="log1p", expand=c(0,0)) +
+  facet_wrap(~it_location) +
+  theme(axis.text.x = element_text(angle=90, hjust = 0.95, vjust = 0.2)) +
+  labs(title = "Rozkład cen towarów w zależności od miasta",
+       x = "Cena",
+       y = "Liczba transkacji")
+```
+
+Cena sprzedawanych towarów jest zależna od lokalizacji sprzedawcy. Powyżej widzimy rozkłady cen dla 10 najpopularniejszych miast. Ceny w Warszawie i Krakowie są widocznie wyższe od cen w pozostałych miastach.
+
+# Podsumowanie
+Analizowany zbiór danych nie zawiera dużych błędów, w szczególności nie ma brakujących wartości. Kolumna **it_location** cechuje się dużym zanieczyszczeniem i wymagałaby dużo pracy przed budową modelu, jeśli zdecydowalibyśmy się ją zostawić. W zbiorze są widoczne pewne korelacje między danymi, najciekawsze wydają się zależności ceny od innych czynników widocznych w transakcjach przedstawione powyżej.
+
