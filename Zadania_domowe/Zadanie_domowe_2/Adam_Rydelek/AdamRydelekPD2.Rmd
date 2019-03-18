@@ -1,0 +1,172 @@
+---
+title: "WUM PD2"
+author: "Adam Rydelek"
+date: "`r format(Sys.time(), '%d - %m - %Y')`"
+output:
+  html_document:
+    df_print: paged
+    toc: true
+    toc_float: true
+    code_folding: hide
+    number_sections: true
+---
+
+```{r setup, include=FALSE}
+library(forcats)
+library(DataExplorer)
+library(visdat)
+library(ggplot2)
+library(readr)
+library(knitr)
+library("kableExtra")
+library("scales")
+require(gridExtra)
+library(funModeling)
+library(dplyr)
+library(scales)
+library(lubridate)
+library(zoo)
+library(caret)
+library(mlr)
+library(vtreat)
+set.seed(1)
+datay <- readr::read_csv("datay.csv")
+```
+
+# Wprowadzenie
+
+Dane, które wybrałem do analizy pochodzą ze zbioru Compass. Zostały one poddane, w ramach pracy nad projektem, obróbce, dzięki której powstał zbiór na którym będę dzisiaj operował. Poniżej znajduje się tabelka z ilością unikalnych wartości poszczególnych zmiennych kategorycznych.
+
+```{r 0}
+apply(datay, 2, function(x) length(unique(x)))
+```
+
+Można więc zauważyć, że w tej ramce danych są zmienne kategoryczne z bardzo dużą liczą unikalnych danych. Na początek odrzucimy te kolumny, które nie powinny wpływać na model, czyli: `first` i `last`. Usuniemy z ramki danych też: `c_jail_in`, `c_jail_out`, `bust_date`, `dob`, aby na razie nie zajmować się datami. Można jednak zauważyć, że zmienna `c_charge_description` została i ma ona aż **514** unikalnych wartości.
+
+## Sprawdzenie wydajności bez kodowania zmiennych
+
+Aby mieć punkt zaczepienia zrobimy model opierający się na powyższej ramce z usuniętymi kolumnami wymionymi powyżej. Został on podzielony na 3 części: część uczącą (60%), walidacyjną (20%) i testową (20%). Sprawdzimy, jak poradzi sobie z problemem wyznaczenia wartości `is_recid` na zbiorze testowym.
+
+```{r 1, warning=FALSE, error=FALSE,message=FALSE}
+spec = c(train = .6, test = .2, validate = .2)
+
+g = sample(cut(
+  seq(nrow(datay)), 
+  nrow(datay)*cumsum(c(0,spec)),
+  labels = names(spec)
+))
+
+datastock <- select(datay, -c(c_jail_in, c_jail_out, bust_date, first, last, dob))
+resS = split(datastock, g)
+train3 <- resS$train
+test3 <- resS$test
+train3[sapply(train3, is.character)] <- lapply(train3[sapply(train3, is.character)], 
+                                       as.factor)
+test3[sapply(test3, is.character)] <- lapply(test3[sapply(test3, is.character)], 
+                                               as.factor)
+
+classif_task <- makeClassifTask(id = "task", data = train3, target = "is_recid")
+classif_lrn <- makeLearner("classif.gbm", predict.type = "prob")
+
+model1 <- mlr::train(classif_lrn, classif_task)
+predict1 <- predict(model1, newdata = test3, type='response')
+
+confusionMatrix(factor(predict1$data$response), factor(test3$is_recid))
+```
+
+Otrzymane wyniki to nasz punkt wyjścia, zobaczymy, czy uda się go poprawić.
+
+# Impact Encoding
+
+Teraz spróbujemy za pomocą pakietu `vtreat` ulepszyć nasz model, dzięki zastosowaniu **impact encoding** na ramce danych, która zażegna nasz problem za dużej liczby unikalnych wartości zmiennych kategorycznych. Wykonam to za pomocą funkcji *designTreatments* i wybiorę odpowiednie jej kolumny odpowiadające za impact encoding.
+
+## Sprawdzenie wydajności Impact Encoding
+
+```{r 2, warning=FALSE, error=FALSE,message=FALSE}
+dataimpact <- select(datay, -c(c_jail_in, c_jail_out, bust_date, first, last, dob))
+res = split(dataimpact, g)
+train2 <- res$train
+calibration2 <- res$validate
+test2 <- res$test
+
+pruneSig <- 1/ncol(train2) 
+
+treatments <- designTreatmentsN(calibration2, varlist=colnames(train2), outcome="is_recid", verbose=FALSE)
+scoreFrame <- treatments$scoreFrame
+vars <- scoreFrame$varName[(scoreFrame$code %in% c("catN", "clean"))]
+dTrainTreated <- prepare(treatments,train2,pruneSig=pruneSig, varRestriction = vars)
+
+classif_task_t <- makeClassifTask(id = "task", data = dTrainTreated, target = "is_recid")
+classif_lrn_t <- makeLearner("classif.gbm", predict.type = "prob")
+
+dTestTreated <- prepare(treatments,test2,
+                        pruneSig=pruneSig, varRestriction = vars)
+
+model2 <- mlr::train(classif_lrn_t, classif_task_t)
+
+predict2 <- predict(model2, newdata = dTestTreated, type='response')
+
+confusionMatrix(factor(predict2$data$response), factor(dTestTreated$is_recid))
+```
+
+Można zauważyć poprawę względem modelu bez kodowania. Accuracy podniosło się o ponad **0.014**, a Sensitivity o **0.031**.
+
+# One Hot Encoding
+
+Sprawdzimy również sposób kodowania: **One Hot Encoding**, który rozbija zmienne kategoryczne na nowe kolumny im odpowiadające, które zawierają wartości 0 i 1 , tak zwane **dummy variables**. Do otrzymania tych zmiennych wykorzystam funkcję *dummyVars* z pakietu `dplyr`, chociaż da się to również zrobić za pomocą biblioteki `vtreat`. Jednak jako, że zmienna c_charge_desc ma aż 514 unikalnych wartości na początku zmniejszyłem ich liczbę do 50 za pomocą funkcji *fct_lump* z pakietu `forcats`, która zmniejsza liczbę unikalnych wartości patrząc na ich rzadkość. 
+
+## Sprawdzenie wydajności One Hot Encoding
+
+```{r 3, warning=FALSE, error=FALSE,message=FALSE}
+datarare <- datay
+datarare$c_charge_desc <- fct_lump(datarare$c_charge_desc, 50)
+datarare <- select(datarare, -c(c_jail_in, c_jail_out, bust_date, first, last, dob))
+dmyT <- dummyVars(" ~ .", data = datarare)
+dmydata <- data.frame(predict(dmyT, newdata = datarare))
+res = split(dmydata, g)
+trainOne <- res$train
+calibrationOne <- res$validate
+testOne <- res$test
+
+trainOne$is_recid <- factor(trainOne$is_recid)
+testOne$is_recid <- factor(testOne$is_recid)
+
+classif_task_t <- makeClassifTask(id = "task", data = trainOne, target = "is_recid")
+classif_lrn_t <- makeLearner("classif.gbm", predict.type = "prob")
+
+model3 <- mlr::train(classif_lrn_t, classif_task_t)
+
+predict3 <- predict(model3, newdata = testOne, type='response')
+
+confusionMatrix(factor(predict3$data$response), factor(dTestTreated$is_recid))
+```
+
+Można zauważyć, że jest on również definitywnie lepszy od modelu bez żadnego kodowania, a nawet trochę poprawił porzedni model z Impact Encoding. Liczba poprawnie odgadniętych przypadków recydywy ("True Positives") zmalała, natomiast liczba poprawnie odgadniętych przypadków braku recydywy wzrosła ("True Negative").
+
+# Podsumowanie
+
+Podsumowując można zauważyć, że przeprowadzone kodowanie zmiennych dało oczekiwany rezultat, mianowicie poprawiło działanie modelu, jednak zmiany nie były drastyczne. Może być to spowodowane tym, że learner sam w sobie koduje zmienne kategoryczne w pewien sposób i robi to całkiem nieźle, dlatego punkt wyjścia był już dobrym wynikiem. Na koniec tabelka podsumowująca kilka głównych miar na przestrzeni trzech modeli. 
+
+|             | No Encoding | Impact Encoding | One Hot Encoding |
+|-------------|-------------|-----------------|------------------|
+| Accuracy    | 0.7469      | 0.7609          | 0.7657           |
+| Sensitivity | 0.8967      | 0.9275          | 0.9363           |
+
+Oraz trzy krzywe ROC dla poszczególnych modeli:
+
+```{r 4, warning=FALSE, error=FALSE,message=FALSE}
+library(ROCR)
+pred <- ROCR::prediction(predict1$data$prob.1,as.numeric(test3$is_recid))
+pred1 <- ROCR::prediction(predict2$data$prob.1,as.numeric(dTestTreated$is_recid))
+pred2 <- ROCR::prediction(predict3$data$prob.1,as.numeric(testOne$is_recid))
+
+perf <- performance( pred, "tpr", "fpr" )
+perf2 <- performance( pred1, "tpr", "fpr" )
+perf3 <- performance( pred2, "tpr", "fpr" )
+
+plot( perf, colorize = FALSE)
+plot(perf2, add = TRUE, colorize = TRUE)
+plot(perf3, add = TRUE, colorize = TRUE)
+```
+
+Krzywa czarna to krzywa ROC modelu bez żadnego kodowania i widać, że pole pod nią jest najmniejsze, dwie kolorowe krzywe oznaczające Impact Encoding i One Hot Encoding są bardzo zbliżone sobie i bardzo ciężko określić, która ma większe pole.
