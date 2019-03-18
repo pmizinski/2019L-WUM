@@ -1,0 +1,70 @@
+---
+title: "Praca Domowa 1"
+author: "Michal Pastuszka"
+date: "March 3, 2019"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+allegro <- read.csv("allegro-api-transactions.csv")
+allegro$pay_option_on_delivery <- as.factor(allegro$pay_option_on_delivery)
+allegro$pay_option_transfer <- as.factor(allegro$pay_option_transfer)
+allegro$it_is_brand_zone <- as.factor(allegro$it_is_brand_zone)
+allegro$it_is_allegro_standard <- as.factor(allegro$it_is_allegro_standard)
+allegro$date <- as.POSIXct(allegro$date)
+library(ggplot2)
+```
+
+## Poprawność danych
+
+W raporcie stworzonym pakietem `DataMaid` zauważyć można przede wszystkim problemy z kolumną `it_location`:
+
+```{r maid, cache=TRUE}
+dataMaid::check(allegro$it_location)
+```
+
+Występują tu wartości z poprzedzającymi spacjami i różne użycie wielkich liter. Dla przykładu Warszawa pojawia się między innymi jako "Warszawa", "warszawa" i " Warszawa". Dodatkowo, braki danych nie są oznaczane w jeden sposób.
+
+Drugim zauważalnym faktem jest to, że w kolumnach `pay_option_on_delivery`, `pay_option_transfer` i `it_is_brand_zone` dominuje jedna wartość, oraz że wraz z kolumną `it_is_allegro standard` powinny być traktowane jako factor, gdyż przyjmują tylko wartości binarne.
+
+```{r fact, echo=FALSE, cache=TRUE}
+
+p1 <- ggplot(allegro, aes(x=it_is_brand_zone)) + geom_bar() + scale_y_continuous(limits=c(0, 420020))
+p2 <- ggplot(allegro, aes(x=pay_option_on_delivery))+ geom_bar() + ylab("") + scale_y_continuous(limits=c(0, 420020)) + theme(axis.text.y=element_blank(), axis.ticks.y = element_blank())
+p3<- ggplot(allegro, aes(x=pay_option_transfer))+ geom_bar() + scale_y_continuous(limits=c(0, 420020))
+p4<- ggplot(allegro, aes(x=it_is_allegro_standard))+ geom_bar() + ylab("") + scale_y_continuous(limits=c(0, 420020)) + theme(axis.text.y=element_blank(), axis.ticks.y = element_blank())
+gridExtra::grid.arrange(p1, p2, p3, p4, ncol=2)
+```
+
+Patrząc na kolumnę `date` można zauważyć, że liczba zarejestrowanych ofert rośnie do godziny 21:00, po czym wykazuje gwałtowny spadek i wzrost o godzinie 22:30. Taka anomalia sugeruje braki w danych z tego przedziału czasowego, bądź problemy z dostępem do strony w tym czasie.
+
+```{r czas, echo=FALSE, cache=TRUE}
+ggplot(allegro, aes(x=date)) + geom_histogram(bins = 150)
+```
+
+W kolumnie `it_quantity` występuje wiele odstających wartości powyżej 90000
+
+```{r quantity, echo=FALSE, cache=TRUE}
+ggplot(allegro, aes(x=it_quantity)) + geom_histogram(bins=30)
+```
+
+## Inne cechy
+
+Najwięcej ofert (91042) należy do kategorii "Dom i Ogród", podczas gdy w kategorii "Nieruchomości" znajdują się tylko dwie:
+
+```{r kategorie, echo=FALSE, cache=TRUE}
+DataExplorer::plot_bar(allegro$main_category)
+```
+
+W każdej kategorii dominują ceny bliskie zera, a najbardziej odstające wartości występują w kategorii `Motoryzacja`:
+
+```{r box, echo=FALSE, cache=TRUE}
+ggplot(allegro, aes(x=main_category, y=price)) + geom_boxplot() + coord_flip()
+```
+
+Niezależnie od kategorii (z wyjątkiem nieruchomości, gdzie obie oferty dodano po 22:00) najwięcej ofert pojawiło się po południu:
+
+```{r dates, echo=FALSE, cache=TRUE}
+ggplot(allegro, aes(x=main_category, y=date)) + geom_boxplot()  + coord_flip()
+```

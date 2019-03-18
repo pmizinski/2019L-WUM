@@ -1,0 +1,116 @@
+---
+title: "Praca domowa nr 2"
+author: "Małgorzata Wachulec"
+date: "18/03/2019"
+output: html_document
+---
+
+```{r setup, include=FALSE, echo=FALSE}
+library(data.table)
+library(vtreat)
+library(mlr)
+library(gbm)
+
+# dane
+allegro <- data.table(read.csv("allegro-api-transactions.csv"))
+tekst <- data.table(read.csv2("allegro-categories-eng.csv"))
+
+# merge na dwoch plikach
+head(allegro$main_category)
+head(tekst$main_category)
+merged <- merge(allegro,tekst,by ="main_category")
+```
+
+## Wstęp
+
+W tej pracy domowej przedstawione będą metody kodowania takie jak one-hot-encoding i impact encoding przy pomocy bibilioteki vtreat. Obie eksploracje zostaną zaprezentowane na danych dotyczących tranzakcji Allegro (https://www.dropbox.com/s/360xhh2d9lnaek3/allegro-api-transactions.csv?dl=0).
+
+## Impact encoding - biblioteka vtreat
+
+Do funkcji designTreatmentsN() potrzebna będzie kolumna typu Target. W zbiorze danych z Allegro nie ma wyznaczonej kolumny, którą mamy przewidzieć, więc wybierzmy którąś z dostępnych np. "price". Użyję funkcji designTreatmentsN, ponieważ jest ona stosowna dla predykcji z numerycznym wynikiem, a price jest kolumną numeryczną:  
+
+```{r treatment, cache=TRUE}
+typeof(merged$price)
+treatmentsN <- designTreatmentsN(merged,colnames(merged),'price')
+```
+
+```{r scores,warning=FALSE,cache=TRUE}
+scoreFrame <- treatmentsN$scoreFrame
+scoreFrame$code
+```
+
+Jak widzać utworzone kolumny są typu: "catP", "catD", "catN", "clean" i "lev". Do impact encoding będziemy potrzebować tylko dwóch z nich:
+
+```{r vars,warning=FALSE,cache=TRUE}
+vars <- scoreFrame$varName[(scoreFrame$code %in% c("catN", "clean"))]
+```
+
+Natępnie używając tych zmiennych przygotowujemy dane za pomocą funkcji prepare(). Ustawiłam scale = TRUE, żeby przeskalować i wyśrodkować zmienne względem kolumny "price".
+
+```{r prepare,warning=FALSE}
+merged_treated <- prepare(treatmentsN,merged,pruneSig=NULL,scale=TRUE,varRestriction = vars)
+head(merged_treated)
+```
+
+Po przeskalowaniu wszystkie kolumny (poza "price") powinny mieć średnią ~ 0 i ich nachylenie powinno być równe 1. Sprawdźmy, czy to prawda:
+
+```{r spr,warning=FALSE}
+varsN <- setdiff(vars,'price')
+sapply(merged_treated[,varsN,drop=FALSE],mean)
+
+sapply(varsN,function(c) { lm(paste('price',c,sep='~'),
+                               data=merged_treated)$coefficients[[2]]})
+```
+
+Jak widać, przeskalowanie zostało zrobione poprawnie.
+
+## One-hot-encoding - biblioteka vtreat
+
+W poprzedniej części wybrałam tylko kolumny typu "clean" i "catN", ponieważ kolumny typu "catD" i "catP" nie są bezpośrednio przydatne w budowaniu modelu, a "lev" jest flagą przyjmującą wartości 0 i 1 w zależności czy próbka jest kategorii zawartej w nazwie kolumny typu "lev", np. jedna z kolumn treatmentsN ma nazwę main_category_lev_x_Dla_Dzieci, co oznacza, że produkty, które w kolumnie main_category miały poziom ("wartość","level") "Dla dzieci" będą miały w main_category_lev_x_Dla_Dzieci w treatmentsN wartość 1, a pozostałe wartość 0. To jest właśnie one-hot-encoding.  i zobaczmy go na przykładzie:
+
+```{r vars2,warning=FALSE,cache=TRUE}
+vars2 <- scoreFrame$varName[(scoreFrame$code %in% c("lev"))]
+merged_treated2 <- prepare(treatmentsN,merged,pruneSig=NULL,scale=FALSE,varRestriction = vars2)
+head(merged_treated2)
+```
+
+Jak widać wszystkie wartości zawarte w kolumnach "lev" zawierają tylko 1 lub 0 w zależności czy dany wiersz należał czy nie należał do danej kategorii - uwaga! jeśli ustawimy scale = TRUE to wtedy otrzymamy wartości różne od 1 i 0 lecz dalej w każdej kolumnie "lev" będą jedynie dwie unikalne wartości, które uśrednią się do ~ 0 i będą miały nachylenie ~ 1.
+
+## Modele dla danych przed i po
+
+```{r kod,warning=FALSE,cache=TRUE}
+# set.seed(1)
+
+# model
+# regr_task1 <- makeRegrTask(id = "task", data =merged, target = "price")
+# regr_lrn1 <- makeLearner("regr.gbm", par.vals = list(n.trees = 10, interaction.depth = 1))
+
+# audit 
+# cv <- makeResampleDesc("CV", iters = 5)
+# r <- resample(regr_lrn1, regr_task1, cv, measures = mse)
+# MSE <- r$aggr[1]
+# MSE
+```
+
+Powyższy kod wyrzuca błąd: Error in gbm.fit(x = x, y = y, offset = offset, distribution = distribution,: 
+  gbm does not currently handle categorical variables with more than 1024 levels. Variable 3: date has 38953 levels. To pokazuje jak poważny jest problem zbyt dużej liczby unikalnych poziomów - model zaprotestował. Teraz sprawdźmy czy pomogła mu transformacja za pomocą vtreat:
+  
+```{r kod2,warning=FALSE,cache=TRUE}
+set.seed(1)
+
+# prepatation
+vars <- scoreFrame$varName[(scoreFrame$code %in% c("catN", "clean","lev"))]
+merged_treated <- prepare(treatmentsN,merged,pruneSig=NULL,scale=TRUE,varRestriction = vars)
+
+# model
+regr_task <- makeRegrTask(id = "task", data =merged_treated, target = "price")
+regr_lrn <- makeLearner("regr.gbm", par.vals = list(n.trees = 10, interaction.depth = 1))
+
+# audit 
+cv <- makeResampleDesc("CV", iters = 5)
+r <- resample(regr_lrn, regr_task, cv, measures = mse)
+MSE <- r$aggr[1]
+MSE
+```
+
+Ten model działa, czyli biblioteka vtreat jest przydatna :D.

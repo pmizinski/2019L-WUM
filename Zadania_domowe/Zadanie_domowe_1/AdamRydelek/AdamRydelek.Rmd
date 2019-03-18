@@ -1,0 +1,221 @@
+---
+title: "WUM_PD1"
+author: "Adam Rydelek"
+date: "`r format(Sys.time(), '%d - %m - %Y')`"
+output:
+  html_document:
+    df_print: paged
+    toc: true
+    toc_float: true
+    code_folding: hide
+    number_sections: true
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, cache = TRUE)
+library(stringi)
+library(dplyr)
+library(ggplot2)
+library(DataExplorer)
+library(funModeling)
+library(minerva)
+library(corrplot) 
+library(RColorBrewer) 
+library(caret)
+library(readr)
+ds <- read.csv("allegro-api-transactions.csv",fileEncoding = "UTF8")
+dsx <- read_csv("allegro-api-transactions.csv")
+cols <- c("price", "it_is_allegro_standard", "it_is_brand_zone", "it_seller_rating", "date","pay_option_on_delivery","pay_option_transfer")
+```
+
+# Wprowadzenie
+
+W raporcie opiszę data set dotyczący transakcji wykonanych na allegro jednego dnia. Sprawdzę poprawność danych, podsumuję ich własności, oraz znajdę powiązania między nimi. Użyte przeze mnie pakiety to `stringi`, oraz `dplyr` do prostej obróbki danych, `DataExplorer`, `funModeling`, `minerva` do bardziej zaawansowanego opisu danych, oraz `RColorBrewer`, `ggplot2`, `corrplot`, `caret` do ich wizualizacji.
+
+##Wstępne podsumowanie danych:
+```{r 0}
+introduce(ds)
+plot_intro(ds)
+```
+
+# Dokładne podsumowanie zmiennych
+
+Aby zaobserwować, jak rozkładają się dane przedstawiłem tabelę zawierającą podsumowanie wszystkich zmiennych, za pomocą komendy `summary()`.
+```{r 1}
+summary(dsx[cols])
+```
+
+Aby lepiej zwizualizować powyższe informacje przedstawiłem histogramy zmiennych `price`, `date`, oraz `seller rating`.
+
+## Cena
+
+```{r 2a, echo=TRUE}
+percentile_var=quantile(ds$price, c(0.98, 0.99, 0.999), na.rm = T)
+df_p=data.frame(value=percentile_var, percentile=c("98th", "99th", "99.9th"))
+p1 <- ggplot(ds) +
+  geom_histogram(bins=20, aes(price))+
+  geom_vline(data=df_p, aes(xintercept=value,  colour = percentile), show.legend = TRUE, linetype="dashed") +
+  theme_light()
+p1
+```
+
+## Data
+
+```{r 2b, echo=TRUE}
+p2 <- ggplot(dsx) +
+  geom_histogram(bins=20, aes(date))+
+  theme_light()
+p2
+```
+
+## Ocena sprzedającego
+
+```{r 2c, echo=TRUE}
+p3 <- ggplot(dsx) +
+  geom_histogram(bins=20, aes(it_seller_rating))+
+  geom_vline(data=df_p, aes(xintercept=value,  colour = percentile), show.legend = TRUE, linetype="dashed") +
+  theme_light()
+p3
+```
+
+# Wnioski z podsumowania i modyfikacja danych
+
+## Korekcja zmiennej "Price"
+Z powyższego histogramu ceny ciężko zauważyć jakąkolwiek zależność, ponieważ tak wiele przedmiotów jest w cenie bliskiej zera. Moim rozwiązaniem tego problemu było usunięcie ze zbioru samochodów i motocykli/quadów, ponieważ były to przedmioty o najwyższej cenie, których było stosunkowo mało w stosunku do całej liczby rekordów, a dokładniej stanowiły 0.27% liczby wszystkich rekordów.
+
+Po tej zmianie histogram wyglądał następująco:
+
+```{r 3, echo=TRUE}
+dsnocars <- filter(ds, stri_detect(ds$categories, regex="(?=^((?!Samochody).)*$)(^((?!Motocykle).)*$)"))
+dsnocars <- filter(dsnocars, price!=0)
+
+percentile_var=quantile(dsnocars$price, c(0.98, 0.99, 0.999), na.rm = T)
+df_p=data.frame(value=percentile_var, percentile=c("a_98th", "b_99th", "c_99.9th"))
+ggplot(dsnocars, aes(price)) + geom_histogram(bins=20) + geom_vline(data=df_p, aes(xintercept=value,  colour = percentile), show.legend = TRUE, linetype="dashed") + theme_light()
+summary(dsnocars$price)
+```
+
+Poprawiło to znacznie widoczność wykresu, jednak aby usunąć punkty brzegowe, usunąłem z ramki danych rekordy, pozostawiając te poniżej kwantyla rzędu 0.99. Histogram wtedy prezentował się tak:
+
+```{r 4, echo=TRUE}
+dsfiltered <- filter(dsnocars, price < quantile(dsnocars$price,0.99))
+percentile_var=quantile(dsfiltered$price, c(0.98, 0.99, 0.999), na.rm = T)
+df_p=data.frame(value=percentile_var, percentile=c("a_98th", "b_99th", "c_99.9th"))
+ggplot(dsfiltered, aes(price)) + geom_histogram(bins=20) + geom_vline(data=df_p, aes(xintercept=value,  colour = percentile), show.legend = TRUE, linetype="dashed") + theme_light()
+summary(dsfiltered$price)
+```
+
+## Podsumowanie danych pod względem kategorii i ich modyfikacja
+
+Aby znaleźć najbardziej istotne główne kategorie produktów zrobiłem wykres łącznej sumy zamówień dla każdej kategorii.
+
+```{r 5, echo=TRUE}
+c <- count(ds, ds$main_category)
+colnames(c) <- c("Main category","freq")
+
+ggplot(data=c, aes(x=reorder(c$`Main category`, -c$freq), y=c$freq)) + geom_bar(stat = "identity",fill=brewer.pal(n=10, name="PuOr")[3]) + ylab("Number of orders") + xlab("Main category") + theme_light() + theme(axis.text.x = element_text(angle = 90, hjust = 1))
+```
+
+Oraz wykres Gross Merchandise Value (GMV).
+
+```{r 6, echo=TRUE}
+gmv <- aggregate(ds$price, list(ds$main_category), sum)
+colnames(gmv) <- c("Main category","GMV")
+ggplot(data=gmv, aes(x=reorder(gmv$`Main category`, -gmv$GMV), y=gmv$GMV)) + geom_bar(stat = "identity",fill=brewer.pal(n=9, name="PuOr")[3]) +
+  ylab("GMV [PLN]") + xlab("Main category") + theme_light() + theme(axis.text.x = element_text(angle = 90, hjust = 1)) 
+```
+
+Aby znaleźć godziny, w których najczęściej wykonywane są zakupy na allegro, wykonałem wykres ilości zamówień od czasu.
+
+```{r 7, echo=TRUE}
+ggplot(dsx, aes(x=date)) +
+  geom_histogram(bins = 24*4,fill=brewer.pal(n=8, name="PuOr")[3]) +
+  xlab("Time") + ylab("Number of orders") + theme_light()
+```
+
+Można zauważyć na nim znaczny spadek w okolicach godziny 22.
+
+# Zależności zmiennych
+
+Do dalszych rozważań ograniczyłem głóWną kategorię do 5 kategorii z największą liczbą zamówień, tzn: "Dom i Ogród","Odzież, Obuwie, Dodatki","Motoryzacja","Dla Dzieci","Sport i Turystyka". 
+
+## Współczynnik zależności zmiennych
+
+Aby uzyskać więcej informacji wykorzystałem pakiet `minerva` i jego komendę `mine`, za pomocą której wyliczyłem współczynnik zależności zmiennych MIC - Maximal Information Coefficient, który potem przedstawiłem na wykresie za pomocą pakietu `corrplot`.
+
+```{r 9, echo=TRUE}
+dstop5_4 =
+  select(dstop5, pay_option_on_delivery, pay_option_transfer,price, it_seller_rating, it_is_allegro_standard, it_is_brand_zone, it_quantity)
+mine_res_hd_2=mine(dstop5_4)
+x <- mine_res_hd_2$MIC
+colnames(x) <- c("Pay on delivery", "Pay by transfer", "Price", "Seller rating", "Allegro standard", "Brand zone", "Quantity")
+rownames(x) <- colnames(x)
+corrplot(x, 
+         method="circle",
+         col=brewer.pal(n=10, name="PuOr"),
+         type="lower", 
+         tl.col="black",
+         tl.cex = 0.9, 
+         tl.srt=90, 
+         diag=FALSE, 
+         is.corr = F 
+)
+```
+
+## Zależność "Pay on delivery"
+
+Sprawdziłem zależność płatności przy odbiorze od kategorii:
+
+```{r 8, echo=TRUE}
+dstop5 <- filter(dsfiltered, main_category%in%c("Dom i Ogród","Odzież, Obuwie, Dodatki","Motoryzacja","Dla Dzieci","Sport i Turystyka"))
+dstop5$main_category <- factor(dstop5$main_category)
+tab <- table(dstop5$main_category, dstop5$pay_option_on_delivery)
+rownames(tab) <- c("Dla Dzieci","Dom i Ogród","Motoryzacja","         Odzież, Obuwie", "a                Sport i Turystyka")
+mosaicplot(tab, las=2, main="", color = c("red", "blue"))
+```
+
+Następnie po zauważeniu, że zmienna określająca płatność przy odbiorze zależy w dużej mierze od ocen sprzedającego, zrobiłem wykres tej zależności za pomocą funkcji 'cross_plot' z pakietu `funModeling`.
+
+```{r 10, echo=TRUE, error=FALSE, warning=FALSE, comment=FALSE}
+colnames(dstop5)[12] <- "Seller rating"
+colnames(dstop5)[5] <- "Pay on delivery"
+suppressMessages(cross_plot(dstop5, input = "Seller rating", target = "Pay on delivery", plot_type = "percentual", auto_binning = TRUE))
+```
+
+Można zauważyć, że przedstawia on jasno, że im więcej ratingu ma sprzedający, tym częściej przedmioty, które sprzedaje są opłacane przy odbiorze. Może to wynikać z tego, że największy rating mają sklepy internetowe, dla których ta opcja jest najłatwiejsza.
+
+## Zależność ilości sprzedanych produktów przez sprzedawców
+
+Aby sprawdzić, od czego zależy sukces danego sprzedawcy na allegro stworzyłem ramkę danych, w której znalazła się zliczona suma sprzedanych przedmiotów przez użytkownika. Następnie ponownie za pomocą funkcji `mine` obliczyłem współczynnik powiązania danych, tym razem liczącą współczynnik korelacji MIC ze zmienną opisującą sumę sprzedanych przedmiotów danego użytkownika. Wyniki zostały przedstawione na poniższym wykresie.
+
+```{r 11, echo=TRUE}
+dstop5 <- as.data.frame(dstop5)
+dstop5a <- select(dstop5, `Pay on delivery`, pay_option_transfer, seller, price, it_is_allegro_standard, it_quantity, it_is_brand_zone, `Seller rating`)
+d <- group_by(dstop5a, seller, add=TRUE) %>% tally()
+d <- data.frame(d)
+result <- suppressMessages(inner_join(dstop5a, d))
+colnames(result) <- c("Pay on delivery", "Pay with transfer", "Seller", "Price", "Allegro standard", "Quantity", "Brand zone", "Seller rating", "Number of sold products")
+result <- select(result, -Seller)
+target="Number of sold products"
+index_target=grep(target, colnames(result))
+mic_predictive=mine(result, 
+                    master = index_target)$MIC
+
+df_predictive = 
+  data.frame(variable=rownames(mic_predictive), 
+             mic=mic_predictive[,1], 
+             stringsAsFactors = F) %>% 
+  arrange(-mic) %>% 
+  filter(variable!=target)
+
+ggplot(df_predictive, 
+       aes(x=reorder(variable, mic),y=mic, fill=variable)
+) + 
+  geom_bar(stat='identity') + 
+  coord_flip() + 
+  theme_light() + 
+  xlab("") + 
+  ylab("Variable correlation with seller's order count (MIC)") + 
+  guides(fill=FALSE)
+
+```
