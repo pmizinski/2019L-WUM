@@ -1,0 +1,128 @@
+---
+title: "homework2"
+author: "Joanna Gajewska"
+date: "18 March 2019"
+output: html_document
+editor_options: 
+  chunk_output_type: console
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+
+```{r,echo=FALSE, include=FALSE, warning=FALSE, message=FALSE, error=FALSE}
+
+library(tidyverse)
+library(WVPlots)
+library(vtreat)
+library(ranger)
+library(mlr)
+library(rmarkdown)
+```
+
+#FICO
+
+Dane z których będę korzystać pochodzą z projektu FICO. To co sprawia trudność w ich obróbce to ujemne wartości dla niektórych cech, które oznaczają, że dane transakcje nie zostały zarejestrowane. W puli danych jest dataset osób, które nigdy nie miały otwartego rachunku, dlatego też, nic o nich nie wiadomo. Z tego powodu usunięto ich z danych.
+
+Kolejno, zastąpiono ujemne dane, na takie które odpowiadałyby sytuacji, czy brak poszczególnych operacji działa na korzyść klienta lub nie.
+
+W pierwszej kolejności zaprezentowano wyniki jakie otrzymano używając klasyfikatora SVM
+```{r , echo=FALSE}
+
+
+
+heloc_dataset_v1<-read.csv(file = "heloc_dataset_v1.csv")
+heloc_no9 <- heloc_dataset_v1[heloc_dataset_v1$MSinceMostRecentTradeOpen != -9, ] 
+a<-2*max(heloc_no9$MSinceMostRecentDelq); a
+
+heloc_no9$MSinceMostRecentDelq[heloc_no9$MSinceMostRecentDelq== -8]<-a
+heloc_no9$MSinceMostRecentDelq[heloc_no9$MSinceMostRecentDelq == -7]<-a
+
+heloc_no9$MSinceMostRecentInqexcl7days[heloc_no9$MSinceMostRecentInqexcl7days== -8]<-2*max(heloc_no9$MSinceMostRecentInqexcl7days)
+heloc_no9$MSinceMostRecentInqexcl7days[heloc_no9$MSinceMostRecentInqexcl7days== -7]<-2*max(heloc_no9$MSinceMostRecentInqexcl7days)
+
+
+heloc_no9$NetFractionRevolvingBurden[heloc_no9$NetFractionRevolvingBurden == -8]<-0
+heloc_no9$NetFractionRevolvingBurden[heloc_no9$NetFractionRevolvingBurden == -7]<-0
+
+
+heloc_no9$NetFractionInstallBurden[heloc_no9$NetFractionInstallBurden== -8]<-0
+heloc_no9$NetFractionInstallBurden[heloc_no9$NetFractionInstallBurden== -7]<-0
+
+b<-median(heloc_no9$NumRevolvingTradesWBalance)
+heloc_no9$NumRevolvingTradesWBalance[heloc_no9$NumRevolvingTradesWBalance == -8]<-b
+heloc_no9$NumRevolvingTradesWBalance[heloc_no9$NumRevolvingTradesWBalance == -7]<-b
+
+
+c<-median(heloc_no9$NumInstallTradesWBalance)
+heloc_no9$NumInstallTradesWBalance[heloc_no9$NumInstallTradesWBalance == -8]<-c
+heloc_no9$NumInstallTradesWBalance[heloc_no9$NumInstallTradesWBalance == -7]<-c
+
+
+heloc_no9$NumBank2NatlTradesWHighUtilization[heloc_no9$NumBank2NatlTradesWHighUtilization == -8]<-0
+heloc_no9$NumBank2NatlTradesWHighUtilization[heloc_no9$NumBank2NatlTradesWHighUtilization == -7]<-0
+
+
+d<-median(heloc_no9$PercentTradesWBalance)
+heloc_no9$PercentTradesWBalance[heloc_no9$PercentTradesWBalance == -8]<-d
+heloc_no9$PercentTradesWBalance[heloc_no9$PercentTradesWBalance == -7]<-d
+
+
+
+task<-mlr::makeClassifTask(data=heloc_no9,target = "RiskPerformance");task
+learner<-makeLearner("classif.svm", predict.type = "response")
+
+
+cv <- makeResampleDesc("CV", iters = 5)
+r <- resample(learner, task, cv,measures=list(acc))
+MSE <- r$aggr
+
+MSE
+```
+A więc za pomocą tradcyjnych metod, uzyskano 73 % skuteczności.
+
+Następnie sprawdzono jakie wyniki mozna osiągnąć korzystjąc z biblioteki vtreat.
+```{r , echo=FALSE}
+
+
+outcome <- "RiskPerformance"
+
+names <- setdiff(colnames(heloc_no9), outcome)
+
+
+isTrain <- runif(nrow(heloc_no9)) <= 0.7
+dTrain <- heloc_no9[isTrain, , drop = FALSE]
+dTest <- heloc_no9[!isTrain, , drop = FALSE]
+
+treatment <- vtreat::mkCrossFrameCExperiment(dTrain, names, outcome, "Good")
+treatment_to_prepare<-treatment$treatments
+newNames <- treatment_to_prepare$scoreFrame$varName
+crossFrame <- treatment$crossFrame
+
+depending <- paste(outcome, 
+           paste(newNames,  collapse = ' + '), 
+           sep = ' ~ ')
+
+model <- ranger(as.formula(depending),  probability = TRUE,  data = crossFrame)
+
+treatedTest <- vtreat::prepare(treatment_to_prepare, dTest, 
+                               pruneSig = NULL, 
+                               varRestriction = newNames)
+pred <- predict(model, 
+                data=treatedTest, 
+                type='response')
+
+
+treatedTest$pred <- pred$predictions[,"Good"]
+
+
+WVPlots::ROCPlot(treatedTest, 
+                 'pred', outcome, "Good",
+                 'test performance')
+
+```
+
+
+Jak widać z powyższego wykresu, za pomocą pakietu vtreat osiągnięto skuteczność 80 %. 
