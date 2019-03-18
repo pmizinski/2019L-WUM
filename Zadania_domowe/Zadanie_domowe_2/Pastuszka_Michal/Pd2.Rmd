@@ -1,0 +1,115 @@
+---
+title: "Praca Domowa 2"
+author: "Michal Pastuszka"
+date: "`r format(Sys.time(), '%d - %m - %Y')`"
+output:
+  html_document:
+    df_print: paged
+    toc: true
+    toc_float: true
+    code_folding: hide
+    number_sections: true
+---
+
+```{r setup, include=FALSE}
+library(mlr)
+library(stringi)
+library(vtreat)
+library(forcats)
+knitr::opts_chunk$set(echo = TRUE)
+dane <- read.csv("allegro-api-transactions.csv")
+```
+
+# Wstęp
+
+Korzystając danych z Allegro, spróbujemy stworzyć model przewidujący cenę z ogłoszenia. Dane zawierają jednak kilka zmiennych jakościowych o bardzo licznych poziomach, które powodują problemy u wielu algorytmów. Wykorzystamy gradient boosting (`regr.bgm` w pakiecie `mlr`).
+
+# Testy
+
+## Bez wstępnego przetwarzania zmiennych
+
+Podając nieobrobione dane funkcja zwraca błąd informując o zmiennych kategorycznych mających więcej niż 1024 poziomy. Nie jest możliwe stworzenie modelu.
+
+## Wstępna obróbka zmiennych
+
+Zanim przetestujemy różne metody radzenia sobie ze zmiennymi, zastąpimy zmienną `date` zmienną liczbową i zmniejszymy nieco liczbę poziomów w zmiennej `it_location` zastępując rekordy, w których nie występują litery brakami danych, usuwając białe znaki i zastępując wielkie litery małymi.
+
+```{r sprzatanie, include = TRUE}
+dane$date <- as.numeric(as.POSIXct(dane$date))
+dane$it_location <- stri_trans_tolower(dane$it_location)
+dane$it_location <- stri_trim(dane$it_location)
+dane$it_location[!stri_detect_regex(dane$it_location, ".*[A-Za-z].*")] <- NA
+dane$it_location <- as.factor(dane$it_location)
+```
+
+## Korzystając z impact encoding
+
+Wykorzystując pakiet `vtreat` możemy zastosować impact encoding do zmiennych kategorycznych w zbiorze. Wykorzystamy wrapper w pakiecie `mlr`, tak aby móc skorzystać z kroswalidacji i tworzyć kodowanie opierając się tylko na zbiorze testowym. Funkcja `designTreatmentsN` uznała, że przekodowania wymagają kolumny `categories`, `seller`, `it_location` i `main_category`.
+
+Tworzymy funkcje do wrappera:
+```{r vtreat, include=TRUE}
+
+trainfun = function(data, target, args = NULL) {
+  treatment <- vtreat::designTreatmentsN(data, colnames(dane)[colnames(dane)!=target], target, verbose = FALSE)
+  vars <- treatment$scoreFrame$varName[(treatment$scoreFrame$code %in% c("catN", "clean"))]
+  treated <- prepare(treatment, data, varRestriction = vars, pruneSig=NULL)
+  out <- list(data=treated, control=list(treatment, vars))
+}
+
+predictfun = function(data, target, args, control) {
+  return(prepare(control[[1]], data, varRestriction = control[[2]], pruneSig=NULL))
+}
+```
+
+Tworzymy model, umieszczając Learner i nasze funkcje we wrapperze:
+```{r model, include = TRUE, echo=TRUE, message=FALSE, cache=TRUE}
+set.seed(123)
+regr_task = makeRegrTask(id = "vtreat", data = dane, target = "price")
+regr_lrn = makeLearner("regr.gbm")
+regr_lrn = makePreprocWrapper(regr_lrn, train = trainfun, predict = predictfun)
+cv <- makeResampleDesc("CV", iters = 5)
+r <- resample(regr_lrn, regr_task, cv, measures = list(mse, rmse, mae, rsq))
+r$aggr
+```
+
+## Pozostawienie tylko najliczniejszych kategorii (drop levels + dummify)
+
+Spróbujemy teraz zastąpić wielokategoryczne zmienne kilkoma zmiennymi binarnymi odpowiadającymi przynależnością do najliczniejszych kategorii. `vtreat` wyróżnił kilka najliczniejszych kategorii w kolumnach `main_category` i `it_location`. Nie znalazł on dominujących kategorii w zmiennych `categories` i `seller`, więc te kolumny odrzucimy. 
+
+```{r dropdummy, include = TRUE, echo=TRUE, message=FALSE, cache=TRUE}
+treatment <- vtreat::designTreatmentsN(dane, colnames(dane)[-8], "price", verbose = FALSE)
+vars <- treatment$scoreFrame$varName[(treatment$scoreFrame$code %in% c("lev", "clean"))]
+treated <- prepare(treatment, dane, varRestriction = vars, pruneSig=NULL)
+colnames(treated) <- stri_escape_unicode(colnames(treated))
+colnames(treated) <- stri_replace_all_regex(colnames(treated), "[^[:alnum:]]", "")
+
+set.seed(123)
+regr_task = makeRegrTask(id = "dummy", data = treated, target = "price")
+regr_lrn = makeLearner("regr.gbm")
+cv <- makeResampleDesc("CV", iters = 5)
+r <- resample(regr_lrn, regr_task, cv, measures = list(mse, rmse, mae, rsq))
+r$aggr
+```
+
+## Zastąpienie mniej licznych zmiennych kategorią other
+
+Podobnie do poprzedniej metody pozostawimy tylko najliczniejsze kategorie, ale zamiast stosować one-hot-encoding wprowadzimy nową kategorię oznaczającą pozostałe wartości. Dzięki temu unikniemy konieczności tworzenia dużej ilości kolumn zawierających w większości zera.
+
+```{r other, include = TRUE, echo=TRUE, message=FALSE, cache=TRUE}
+  
+dane$it_location <- fct_lump(dane$it_location, 10)
+dane$categories <- fct_lump(dane$categories, 10)
+dane$seller <- fct_lump(dane$seller, 10)
+  
+set.seed(123)
+regr_task = makeRegrTask(id = "vtreat", data = dane, target = "price")
+regr_lrn = makeLearner("regr.gbm")
+cv <- makeResampleDesc("CV", iters = 5)
+r <- resample(regr_lrn, regr_task, cv, measures = list(mse, rmse, mae, rsq))
+  
+r$aggr
+```
+
+#Podsumowanie
+
+W tym wypadku najlepiej sprawdził się impact encoding. Nie tracimy w jego przypadku dużej ilości informacji, jednak jest on najbardziej wymagający obliczeniowo. Z pozostałych metod nieznacznie lepiej sprawdziło się wprowadzenie kategorii other, jednak może to być spowodowane pozostawieniem większej ilości kategorii.
