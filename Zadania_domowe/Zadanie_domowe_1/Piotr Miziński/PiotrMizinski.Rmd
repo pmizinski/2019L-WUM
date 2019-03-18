@@ -1,0 +1,283 @@
+---
+title: "PiotrMizinski"
+author: "Piotr Miziński"
+date: "6 marca 2019"
+output:
+  html_document:
+    df_print: paged
+    toc: true
+    toc_float: true
+    code_folding: hide
+    number_sections: true
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, cache = TRUE,width = 150)
+
+library(dplyr)
+library(ggplot2)
+library(ggthemes)
+library(scales)
+
+allegro <- read.csv("allegro-api-transactions.csv",encoding="UTF-8")
+kat <- read.csv("allegro-categories-eng.txt",sep=";",encoding="UTF-8")
+colnames(kat)[1]<-"main_category"
+
+allegro2 <- inner_join(allegro,kat,by = "main_category",copy=FALSE)%>% select(-c(lp,main_category_eng))
+allegro2$date <- as.POSIXct(allegro2$date)
+
+```
+
+# Wstęp
+
+W tej pracy domowej postaram się przeprowadzić eksplorację danych zbioru Allegro z pierwszego wykładu. Na początek przeanalizauję poszczególne kolumny, później wyłuskam i przedstawię kilka wybranych rankingów, a następnie zaprezentuję ich zmianę w czasie. Na koniec zilustruję przykładowe możliwości pakietu *visdata*.
+
+#Analiza zbioru
+
+Po wczytaniu oraz połączeniu zbioru głównego i zawierającego nazwy kategorii powstał następujący zbiór, który poddano dalszej analizie (pokazano tylko 6 pierwszych wierszy):
+```{r head}
+head(allegro2)
+```
+
+W celu szybkiego zorientowania się z jakimi kolumnami mamy do czynienia użyto na każdej z nich polecenia `summary` oraz `is.na`. Wyniki zaprezentowano poniżej.
+
+```{r summ,echo=FALSE}
+for(x in colnames(allegro2)){
+  print(summary(allegro2[x]))
+  cat("Brakujące dane:")
+  print(sum(is.na(allegro2[x])))
+  cat("\n")
+}
+```
+
+To proste polecenie dało ogólne pojęcie o zbiorze danych oraz zasugerowało w jakim kierunku może pójść nasza analiza, którą zaprezentowano w dlaszych rozdziałach.
+
+#Top5
+W tym rozdziale zaprezentowano wykresy przedstawiające listy top5 wartości z danej dziedziny.
+
+##Top5 najdroższych kategorii
+Na pierwszym wykresie pokazano top5 najbardziej dochodowych kategorii, z których sprzedawano produkty za pośrednictwem platformy allegro, pod względem sumy, a na drugim wykresie ze względu na średnią kwotę transakcji.
+
+```{r najd,echo=FALSE}
+kat5sum <- allegro2 %>% group_by(main_category) %>% summarise(sum = sum(price)) %>% arrange(desc(sum))
+kat5sum <- kat5sum[1:5,]
+
+kat5sum$main_category <- as.character(kat5sum$main_category)
+kat5sum$main_category <- factor(kat5sum$main_category, levels=unique(kat5sum$main_category))
+
+k1 <- ggplot(kat5sum, aes(x=main_category, y=sum/1000000))+ geom_bar(stat="identity", fill="steelblue")+
+  theme_economist(base_size = 12)+ylab("suma kwot [mln zł]") + 
+  ggtitle("Top5 kategorii wg. łącznej sumy kwoty sprzedanych produktów.")+
+  theme(axis.text=element_text(size=10),
+        axis.title=element_text(size=10,face="bold"),
+        plot.title = element_text(size=14,hjust = 0.5),
+        axis.text.x = element_text(angle = 10, vjust = 1))
+k1
+```
+
+```{r najdM,echo=FALSE}
+kat5mean <- allegro2 %>% group_by(main_category) %>% summarise(mean = mean(price)) %>% arrange(desc(mean))
+kat5mean <- kat5mean[1:5,]
+
+kat5mean$main_category <- as.character(kat5mean$main_category)
+kat5mean$main_category <- factor(kat5mean$main_category, levels=unique(kat5mean$main_category))
+
+k2 <- ggplot(kat5mean, aes(x=main_category, y=mean))+ geom_bar(stat="identity", fill="steelblue")+
+  theme_economist(base_size = 12)+ylab("średnia kwota [zł]") + 
+  ggtitle("Top5 kategorii wg. średniej kwoty sprzedanych produktów.")+
+  theme(axis.text=element_text(size=10),
+        axis.title=element_text(size=10,face="bold"),
+        plot.title = element_text(size=14,hjust = 0.5),
+        axis.text.x = element_text(angle = 20, vjust = 1))
+k2
+```
+
+Jak możemy zauważyć jedynie jedna kategoria - *motoryzacja* powtarza się w obu zestawieniach. Dla top5 kategorii wykonano również wykresy *boxplot*, co zaprezentowano poniżej. Wykresy te wykonano względem logarytmu z ceny transakcji, aby były one bardziej przejrzyste i wygodne do wizualnego porównania.
+
+```{r b1,echo=FALSE,results='hide',fig.keep='all'}
+kat5sum <- allegro2 %>% group_by(main_category) %>% summarise(sum = sum(price)) %>% arrange(desc(sum))
+kat5sum <- kat5sum[1:5,]
+allegro5kat <- allegro2 %>% filter(main_category == kat5sum$main_category)
+
+b1 <- ggplot(allegro5kat, aes(x=main_category, y=log(price))) +
+  ggtitle("Top5 kategorii wg. sumy kwoty sprzedanych produktów.")+
+    theme(axis.text=element_text(size=10),
+        axis.title=element_text(size=10,face="bold"),
+        plot.title = element_text(size=14,hjust = 0.5))+
+  geom_boxplot()+ theme(axis.text.x = element_text(angle = 15, vjust = 1))
+suppressWarnings(print(b1))
+```
+
+##Top5 sprzedawców
+Na pierwszym wykresie pokazano top5 sprzedawców, którzy dokonali najwięcej transakcji, a na drugim z największą sumą kwot transakcji.
+
+```{r k3,echo=FALSE}
+sel5n <- allegro2 %>% group_by(seller) %>% summarise(n = n()) %>% arrange(desc(n))
+sel5n <- sel5n[1:5,]
+
+sel5n$seller <- as.character(sel5n$seller)
+sel5n$seller <- factor(sel5n$seller, levels=unique(sel5n$seller))
+
+k3 <- ggplot(sel5n, aes(x=seller, y=n))+ geom_bar(stat="identity", fill="steelblue")+
+  theme_economist(base_size = 12)+ylab("liczba transakcji") + 
+  ggtitle("Top5 sprzedawców wg. liczby operacji.")+
+  theme(axis.text=element_text(size=10),
+        axis.title=element_text(size=10,face="bold"),
+        plot.title = element_text(size=14,hjust = 0.5))
+k3
+```
+
+```{r k4,echo=FALSE}
+sel5sum <- allegro2 %>% group_by(seller) %>% summarise(sum = sum(price)) %>% arrange(desc(sum))
+sel5sum <- sel5sum[1:5,]
+
+sel5sum$seller <- as.character(sel5sum$seller)
+sel5sum$seller <- factor(sel5sum$seller, levels=unique(sel5sum$seller))
+
+k4 <- ggplot(sel5sum, aes(x=seller, y=sum/1000))+ geom_bar(stat="identity", fill="steelblue")+
+  theme_economist(base_size = 12)+ylab("suma kwot [tys. zł]") + 
+  ggtitle("Top5 sprzedawców wg. sumy kwoty sprzedanych produktów.")+
+  theme(axis.text=element_text(size=10),
+        axis.title=element_text(size=10,face="bold"),
+        plot.title = element_text(size=14,hjust = 0.5))
+k4
+```
+
+Jak widać dla obu tych miar prym wiedzie Allegro, a pozostałe miejsca się różnią. Dla top5 sprzedawców wykonano również wykresy *boxplot*, co zaprezentowano poniżej. Wykresy te wykonano względem logarytmu z ceny transakcji, aby były one bardziej przejrzyste i wygodne do wizualnego porównania.
+
+```{r b2,echo=FALSE,results='hide',fig.keep='all'}
+sel5n <- allegro2 %>% group_by(seller) %>% summarise(n = n()) %>% arrange(desc(n))
+sel5n <- sel5n[1:5,]
+allegro5sel <- allegro2 %>% filter(seller == sel5n$seller)
+
+b2 <- ggplot(allegro5sel, aes(x=seller, y=log(price))) +
+  ggtitle("Top5 sprzedawców wg. liczby wykonanych transakcji.")+
+    theme(axis.text=element_text(size=10),
+        axis.title=element_text(size=10,face="bold"),
+        plot.title = element_text(size=14,hjust = 0.5))+
+  geom_boxplot()
+suppressWarnings(print(b2))
+```
+
+##Top5 lokalizacji
+Na pierwszym wykresie pokazano miejscowości, dla których przeprowadzono najwiecej transakcji, natomiast na drugim zaprezentowano miasta, dla których transakcje mają najwyższą średnią kwotę zakupu, przy czym wzięto pod uwage jedynie lokalizacjie z przynajmniej 1000 operacji.
+
+```{r k5,echo=FALSE}
+loc5n <- allegro2 %>% group_by(it_location) %>% summarise(n = n()) %>% arrange(desc(n))
+loc5n <- loc5n[1:5,]
+
+loc5n$it_location <- as.character(loc5n$it_location)
+loc5n$it_location <- factor(loc5n$it_location, levels=unique(loc5n$it_location))
+
+k5 <- ggplot(loc5n, aes(x=it_location, y=n))+ geom_bar(stat="identity", fill="steelblue")+
+  theme_economist(base_size = 12)+ylab("liczba transakcji") + 
+  ggtitle("Top5 lokalizacji wg. liczby operacji.")+
+  theme(axis.text=element_text(size=10),
+        axis.title=element_text(size=10,face="bold"),
+        plot.title = element_text(size=14,hjust = 0.5))
+k5
+```
+
+```{r k6,echo=FALSE}
+loc5mean <- allegro2 %>% group_by(it_location) %>% summarise(n=n(),mean = mean(price))%>% 
+  filter(n>1000) %>% arrange(desc(mean))
+loc5mean <- loc5mean[1:5,]
+
+loc5mean$it_location <- as.character(loc5mean$it_location)
+loc5mean$it_location <- factor(loc5mean$it_location, levels=unique(loc5mean$it_location))
+
+k6 <- ggplot(loc5mean, aes(x=it_location, y=mean))+ geom_bar(stat="identity", fill="steelblue")+
+  theme_economist(base_size = 12)+ylab("średnia kwota [zł]") + 
+  ggtitle("Top5 lokalizacji wg. średniej kwoty operacji. \nLokalizacje, dla których wykonano przynajmniej 1000 operacji.")+
+  theme(axis.text=element_text(size=10),
+        axis.title=element_text(size=10,face="bold"),
+        plot.title = element_text(size=14,hjust = 0.5))
+k6
+```
+
+Jak można zauważyć w Warszawie dokonuje się najwięcej zakupów w serwisie Allegro, natomiast na obu wykresach pojawił się jedynie Poznań.
+
+##Top10 najdroższych
+
+Poniżej pokazano 10 najdroższych transakcji.
+
+```{r top10,echo=FALSE}
+top10 <- allegro2 %>% arrange(desc(price)) %>% select(main_category,price,seller,it_location,it_quantity)
+top10 <- top10[1:10,]
+top10
+```
+Jak widać wszystkie transakcjie dotyczyły motoryzacji.
+
+Ta analiza, oprócz ciekawych wyników, skłoniła nas również do kolejnej analizy poprawności danych, a mianowicie zweryfikowania liczby transakcji, które mają wpisana liczbę jednostek równą 0.
+
+```{r o0,echo=FALSE}
+cat("Liczba jednostek = 0:")
+sum(allegro2$it_quantity==0)
+```
+
+#Histogramy
+
+W tym rozdziale pokazano dwa wykresy. Pierwszy z nich prezentuje rozkład liczby dokonywanych wszystkich transakcji w ciągu dnia. Drugi wykres zawierający kilka wykresów również pokazuje histogram transakcji, ale z podziałem na kategorie.
+
+```{r h1,echo=FALSE}
+h1 <- ggplot(allegro2, aes(date, ..count..)) + 
+  geom_histogram(bins=50) +
+  theme_economist(base_size = 10) + xlab(NULL)+ 
+  ggtitle("Liczba operacji w zależności od pory dnia.")+
+  theme(axis.text=element_text(size=10),
+        axis.title=element_text(size=10,face="bold"),
+        plot.title = element_text(size=14,hjust = 0.5))
+h1
+```
+
+```{r h2,echo=FALSE}
+kat5sum <- allegro2 %>% group_by(main_category) %>% summarise(sum = sum(price)) %>% arrange(desc(sum))
+kat5sum <- kat5sum[1:5,]
+allegro2b <- allegro2 %>% filter(main_category == kat5sum$main_category)
+
+h2 <- ggplot(allegro2b, aes(date, ..count..)) + 
+  geom_histogram(bins=100) +
+  theme_economist(base_size = 10) + xlab(NULL)+
+  ggtitle("Liczba operacji w zależności od pory dnia z podziałem na kategorie.")+
+  theme(axis.text=element_text(size=10),
+        axis.title=element_text(size=10,face="bold"),
+        plot.title = element_text(size=14,hjust = 0.5))
+
+h2 + facet_wrap(main_category~.,ncol=1)+theme(strip.text.x = element_text(size=10,vjust=-0.5))
+```
+
+Jak widać na pierwszym wykresie liczba dokonywanych transakcji sukcesywnie rośnie od godziny 6, by ustabilizować się na moment około godziny 12 i następnie osiągnąć maksimum w godzinach wieczornych. Ciekawym jest wystąpienie chwilowego drastycznego spadku liczby zamówień około godziny 22. Może być to związane z przyczynami technicznymi i/lub migracyjnymi serwisu allegro. W godzinach nocnych nie obserwuje się wielu transakcji.
+Z drugiego wykresu widać, że główne kategorie zachowują trend podobny do ogólnego, a zmiany są ledwo zauważalne.
+
+#visdata
+
+Na potrzeby tej pracy domowej zapoznano się z pakietem *visdata*, służącym do wizualizacji ramek danych, pomocnym przy ich analizie.
+
+```{r v,echo=FALSE}
+library(visdat)
+allegroNum <- allegro2 %>% select_if(is.numeric)
+```
+
+Wykorzystując polecenie `vis_dat()` pakiet ten oferuje możliwość wizualizacji typów danych zawartych w każdej z kolumn. Umożliwia również weryfikację braków tzw. 'NA'. Owe wystąpienia nie są zauważalne na poniższym obrazku. Poniżej pokazano zastosowanie polecenia dla naszego zbioru, który ograniczono jedynie do numerycznych kolumn, aby obraz był atrakcyjniejszy i bardziej przejrzysty.
+
+```{r v1,echo=FALSE}
+vis_dat(allegro2, warn_large_data = FALSE)
+```
+
+Polecenie `vis_miss()` potwierdza nasze przypuszczenia, zbiór danych jest kompletny - rysunek poniżej.
+
+```{r v2,echo=FALSE}
+vis_miss(allegro2, warn_large_data = FALSE)
+```
+
+Ostatnim z poleceń, któe zdecydowano się zaprezentować jest `vis_cor()`, które pokazuje korelację zbioru danych, prezentując ją na atrakcyjnym wykresie, który zaprezentowano poniżej.
+
+```{r v3,echo=FALSE}
+vis_cor(allegroNum, warn_large_data = FALSE)
+```
+
+Pakiet `visdat` pozwala na szybką, wizualną analizę zbioru danych. Jest to atrakcyjny sposób na kontrolę danych i dowiedzenie się podstawowych informacji na ich temat.
+
+# Podsumowanie
+
+Dzięki poleceniom i pakietom oferowanym przez język R można szybko sprawdzić poprawność, jakość i rodzaj danych zawartych w zbiorze danych i ewentualnie je poprawić. Pozwala on również na dogłębną analizę, która może powiedzieć nam wiele interesujących i przydatych rzeczy o danym zjawisku, które można później wykorzystać w praktyczny sposób. Na przykład analizując histogram operacji w ciągu dnia, możemy zdecydować w jakich godzinach wyświetlać dane reklamy, biorąc pod uwagę rozkłady dla różnych kategorii produktów.

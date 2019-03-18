@@ -1,0 +1,169 @@
+---
+title: "Analiza danych tranzakcyjnych Allegro z dnia 3 kwietnia 2016 r." 
+author: "Bogdan JastrzÄ™bski"
+date: "`r format(Sys.time(), '%d - %m - %Y')`"
+output:
+  html_document:
+  df_print: paged
+toc: true
+toc_float: true
+number_sections: true
+
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE, warning = FALSE)
+require(dplyr)
+```
+
+# Raport 
+
+# Wprowadzenie
+
+  ```{r, cache = TRUE, echo = FALSE}
+library(DataExplorer)
+library(dplyr)
+library(dataMaid)
+library(ggplot2)
+library(visdat)
+d <- read.csv(file = "allegro-api-transactions.csv", encoding="UTF-8", stringsAsFactors=FALSE)
+c <- read.csv(file = "allegro-categories-eng.txt", sep = ";", encoding="UTF-8", stringsAsFactors=FALSE)
+t <- merge(x = d, y = c, by.x = "main_category", by.y = "X.U.FEFF.main_category", all.x = TRUE)
+t$date %>% as.POSIXct() -> t$date
+t$it_is_brand_zone <- as.factor(t$it_is_brand_zone)
+t$pay_option_on_delivery <- as.factor(t$pay_option_on_delivery)
+t$it_is_allegro_standard <- as.factor(t$it_is_allegro_standard)
+t$pay_option_transfer <- as.factor(t$pay_option_transfer)
+t$main_category <- as.factor(t$main_category)
+t$main_category_eng <-as.factor(t$main_category_eng)  
+t$categories        <-as.factor(t$categories )
+t$seller            <-as.factor(t$seller      )       
+t$it_location       <-as.factor(t$it_location)
+```
+
+# 0. Dane i ich poprawnoĹ›Ä‡
+
+Na poczÄ…tku przyjĹĽymy siÄ™ zbiorowi danych.
+
+```{r}
+visdat::vis_dat(t[sample(1:nrow(t), 1000),], warn_large_data = FALSE)
+```
+
+Jak widaÄ‡ mamy w wiÄ™kszoĹ›ci do czynienia ze zmiennymi typu factor, kilka liczbowych, i jedna czasowa (po przekonwertowaniu w r).
+
+```{r}
+DataExplorer::plot_missing(t)
+```
+
+Wszystkie kolumny sÄ… kompletne.
+
+# 1. Wykres korelacji
+
+  ```{r} 
+DataExplorer::plot_correlation(t)
+```
+
+PowyĹĽszy wykres przedstawia wykres korelacji miÄ™dzy rĂłĹĽnymi zmiennymi. SzczegĂłlnie warto zwrĂłciÄ‡ uwagÄ™ na wyĹĽszÄ… korelacjÄ™ miÄ™dzy "it_is_allegro_standard" i "pay_option_on_delivery", a takĹĽe  "pay_option_on_delivery" i  "pay_option_transfer".
+
+# 2. RozkĹ‚ad transakcji na przestrzeni dnia
+
+```{r}
+library(ggplot2)
+ggplot(t, aes(x = date)) +
+  geom_histogram(bins = 24*4, fill = 'skyblue') +
+  xlab("Data") + 
+  ylab("Liczba") + 
+  theme_minimal() + 
+  scale_x_datetime(date_breaks = "2 hours", date_labels = "%H-%M") +
+  scale_y_continuous(breaks = 1:14 * 1000) +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1)) + 
+  ggtitle("Dzienny rozkĹ‚ad transakcji")
+
+```
+
+Na wykresie powyĹĽej przedstawiono dzienny rozkĹ‚ad transakcji wykonanych na platformie allegro.pl dnia 3 kwietnia 2016 r.
+WidaÄ‡ ciekawÄ… zaleĹĽnoĹ›Ä‡, bÄ…dĹş teĹĽ anomaliÄ™. Mianowicie moĹĽna zaobserwowaÄ‡ nagĹ‚y spadek liczby transakcji miÄ™dzy godzinami
+21 i 23. O 23 liczba transakcji wraca do poziomu z godziny 21 i ponownie raptownie maleje. 
+
+PozostajÄ… jeszcze dwa okresy w ciÄ…gu dnia, kiedy liczba transakcji
+zmalaĹ‚a. W okolicach 16 ludzie zazwyczaj wracajÄ… z pracy, byÄ‡ moĹĽe spadek transakcji wtedy wĹ‚aĹ›nie z tego wynika. Liczba transakcji spada oczywiĹ›cie takĹĽe nocÄ…. 
+
+NajwiÄ™ksza liczba transakcji wykonywana jest w godzinach pĂłĹşnych.
+
+# 3. RozkĹ‚ad cen produktĂłw
+
+```{r}
+ggplot(t, aes(x = "Transactions", y = price)) +
+  geom_boxplot(fill = "#cb4154") +
+  coord_flip() +
+  theme_minimal() +
+  ylab("Price") +
+  xlab("") +
+  scale_y_log10(breaks = round(exp(0:10))) +
+  ggtitle("Ceny produktĂłw")
+```
+
+WartoĹ›Ä‡ medialna wynosi 25zĹ‚, najwiÄ™ksza transakcja natomiast osiÄ…gnÄ™Ĺ‚a wartoĹ›Ä‡ aĹĽ 119000zĹ‚.
+
+```{r}
+ggplot(t, aes(x = price)) +
+  geom_density(fill = "skyblue", color = "skyblue") + 
+  xlab("Price") + 
+  ylab("GÄ™stoĹ›Ä‡") + 
+  scale_x_log10() + 
+  theme_minimal() 
+```
+
+Tutaj z kolei widaÄ‡ dokĹ‚adnÄ… gÄ™stoĹ›Ä‡ zmiennej Price. Tutaj warto zauwaĹĽyÄ‡, ĹĽe wykres jest w skali logarytmicznej, zmienna Price ma gÄ™stoĹ›Ä‡ lewoskoĹ›nÄ…, co nie powinno dziwiÄ‡.
+
+
+# 4. it_is_allegro_standard
+
+```{r}
+library(ggplot2)
+ggplot(t, aes(x = it_is_allegro_standard)) +
+  geom_bar(fill = "seagreen") +
+  ylab("Liczba") + 
+  ggtitle("PorĂłwnanie liczby transakcji w standardzie allegro i poza") +
+  theme_minimal()
+```
+
+Jak widaÄ‡ wiÄ™kszoĹ›Ä‡ transakcji wykonanych tego dnia jest w standardzie allegro, aczkolwiek wiele
+jest takĹĽe transakcji poza standardem.
+
+# 5. it_is_brand_zone
+
+```{r}
+library(ggplot2)
+ggplot(t, aes(x = it_is_brand_zone)) +
+  geom_bar(fill = "seagreen") +
+  ylab("Liczba") + 
+  ggtitle("Brand zone") +
+  theme_minimal()
+```
+
+Jak widaÄ‡ przewaĹĽajÄ…ca liczba transakcji byĹ‚a poza brand zone. 
+
+# 6. it_seller_rating
+
+```{r}
+library(ggplot2)
+
+ggplot(t, aes(x = it_seller_rating)) +
+  geom_density(fill = "skyblue", color = "skyblue") + 
+  ylab("GÄ™stoĹ›Ä‡") +
+  scale_x_log10() + 
+  theme_minimal()
+
+```
+
+Warto zauwaĹĽyÄ‡, ĹĽe w wiÄ™kszoĹ›ci na allegro aktywni sÄ… sprzedawcy bardzo popularni. Oznacza to, ĹĽe allegro sĹ‚uĹĽy gĹ‚Ăłwnie firmom, a nie jednostkom.
+
+# 7. Kategorie
+
+```{r}
+DataExplorer::plot_bar(t$main_category)
+```
+
+Tutaj widaÄ‡ porĂłwnanie liczby transakcji dla kategorii. NajwiÄ™cej transakcji miaĹ‚o kategoriÄ™ Dom i OgrĂłd. Co ciekawe motoryzacja takĹĽe znalazĹ‚a siÄ™ doĹ›Ä‡ wysoko.
+

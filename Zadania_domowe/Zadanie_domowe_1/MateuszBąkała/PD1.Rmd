@@ -1,0 +1,139 @@
+---
+title: "Analiza zbioru Allegro"
+author: "Bąkała Mateusz"
+date: "2 marca 2019"
+output: html_document
+---
+
+```{r setup, include=FALSE, cache=TRUE}
+allegro.data <- read.csv("https://www.dropbox.com/s/360xhh2d9lnaek3/allegro-api-transactions.csv?dl=1", encoding = "UTF-8")
+```
+
+```{r setup2, include=FALSE}
+library(DataExplorer)
+library(dataMaid)
+library(ggplot2)
+library(knitr)
+library(rlang)
+library(ggmosaic)
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+W tym dokumencie zajmiemy się omówieniem zbioru danych transakcji z Allegro. Na początek obejrzymy, z jakimi problemami boryka się ten dataset, potem omówimy pojedyncze zmienne, by wreszcie poszukać jakichś zależności pomiędzy kolumnami.
+
+## Badanie stanu danych
+
+Na początek zapoznajmy się z dostarczonym nam zbiorem danych:
+
+```{r intro, echo=FALSE}
+kable(introduce(allegro.data))
+```
+
+### Brakujące wartości
+
+Jak mogliśmy zauważyć, nie ma w analizowanym zbiorze brakujących danych. To dobra wiadomość – dzięki temu nie ponieślibyśmy strat na etapie czyszczenia. Poniżej – wizualizacja tego faktu:
+
+```{r missing, echo=FALSE}
+plot_missing(allegro.data)
+```
+
+### Histogramy
+
+Skoro już dowiedliśmy, że nie mamy braków danych, możemy przejść do etapu analizy danych ilościowych. Wykorzystajmy funkcję generującą histogramy dla wszystkich kolumn numerycznych, aby ocenić potrzebne kroki.
+
+```{r hist, echo=FALSE}
+plot_histogram(allegro.data)
+```
+
+Natychmiast rzuca się w oczy kilka rzeczy do zrobienia. Po pierwsze – zupełnie zbędna kolumna z numerem wiersza. Ponadto mamy całą grupę zero-jedynkowych kolumn, które powinniśmy zapisać jako kategoryczne/logiczne. Również id produktu nie jest liczbą, która ma dla nas znaczenie, więc i tutaj zastosujemy konwersję do faktora. Przy okazji skonwertujemy też kolumnę dat do formatu przechowującego daty na potrzeby późniejszych analiz.
+
+```{r posthist}
+allegro.data <- drop_columns(allegro.data, "lp")
+allegro.data$pay_option_on_delivery <- as.logical(allegro.data$pay_option_on_delivery)
+allegro.data$pay_option_transfer <- as.logical(allegro.data$pay_option_transfer)
+allegro.data$it_is_allegro_standard <- as.logical(allegro.data$it_is_allegro_standard)
+allegro.data$it_is_brand_zone <- as.logical(allegro.data$it_is_brand_zone)
+allegro.data$item_id <- as.factor(allegro.data$item_id)
+allegro.data$date <- as.POSIXct(allegro.data$date)
+```
+
+### Wykresy słupkowe
+
+Skoro przenieśliśmy już część kolumn ilościowych do zbioru kolumn jakościowych, przedstawmy te drugie za pomocą wykresów słupkowych:
+
+```{r bar, echo=FALSE}
+plot_bar(allegro.data)
+```
+
+Ponieważ celem tej analizy nie jest oczyszczenie zbioru danych, lecz tylko kosmetyczne przygotowanie go do opisów, nie będziemy dokonywać żadnych manipulacji na kategoriach.
+
+### Sprawdzenie z dataMaid
+
+Pozostaje nam tylko sprawdzić problemy przy użyciu biblioteki dataMaid. Wykorzystamy wygodną funkcję check na naszym datasecie. Przy okazji przefiltrujemy wynikową listę, by w pewnym stopniu ją skrócić.
+
+```{r check1, cache=TRUE}
+allegro.check <- check(allegro.data)
+```
+
+```{r check2, echo=FALSE}
+lambda <- function(x) {
+  r <- !sapply(lapply(x, function(y) if(is.null(y$problemValues)) y <- NULL else y), is.null)
+  return (r[which(r)])
+}
+
+lapply(allegro.check, function(x) if(!is_empty(lambda(x))) x[names(lambda(x))])
+```
+
+Jak możemy zauważyć, kolumna it_location wymaga szczególnej troski z uwagi na typowe dla gatunku ludzkiego niekonsekwencje w zapisie. Poza tym mamy jedynie potencjalne wartości odstające oraz kategorie z małą liczbą obserwacji. Zwróćmy też uwagę na interesujące, choć fałszywe spostrzeżenie, że "...Andy...." mogłoby być sposobem na zapis brakujących danych w kolumnie id sprzedawcy.
+
+## Analizy jednowymiarowe
+
+Możemy przejść do następnego punktu naszego dokumentu, w którym zajmiemy się nieco dokładniej analizami pojedynczych kolumn. Wykorzystajmy funkcję table dla zmiennych kateogrycznych i summary dla ilościowych. Wyniki zilustrujmy przy użyciu wykresów.
+
+```{r main_category, echo=FALSE}
+t <- as.data.frame(table(allegro.data$main_category))
+names(t) <- c("Kategoria", "Ilosc")
+kable(t, caption = "Główne kategorie produktów")
+ggplot(data = as.data.frame(rev(t)), aes(x = Kategoria, y = Ilosc)) +
+  geom_bar(stat = "identity") +
+  labs(title = "Główne kategorie produktów", x = "Kategoria", y = "Ilość") +
+  coord_flip()
+```
+
+Liczności każdej z kategorii dość dobrze odzwierciedlają częstotliwość potrzeb przeciętnego Kowalskiego. Dwoma odchyleniami od spodziewanych rezultatów są kategorie "Motoryzacja" i "Filmy". W pierwszym przypadku znacząca liczba ofert jest prawdopodobnie pochodną faktu, że – w przeciwieństwie do pozostałych kategorii – Allegro jest jednym z nielicznych mediów, które pozwala na dotarcie do wielu potencjalnych kupców. Z kolei ofert filmów jest stosunkowo niewiele, ale to wynika z faktu, że kilka innych środków pozyskiwania filmów jest bardziej popularnych (jak chociażby telewizja czy platformy z filmami).
+
+```{r it_seller_rating, echo=FALSE}
+summary(allegro.data$it_seller_rating)
+r <- cut(allegro.data$it_seller_rating, breaks = c(seq(0, 70000, 5000), Inf), right = FALSE, dig.lab = 5)
+r2 <- as.data.frame(table(r))
+ggplot(r2, aes(x = r, y = Freq)) +
+  geom_bar(stat = "identity") +
+  coord_flip() +
+  labs(title = "Rozkład ocen sprzedawców", x = "Ocena", y = "Liczność")
+```
+
+Jak można było się spodziewać, rozkład ocen sprzedawców jest skośny, ponieważ rejestracja nowych użytkowników jest stale otwarta, tacy użytkownicy zaczynają w punkcie 0, a zdobycie dużej ilości punktów wymaga czasu.
+
+## Analizy dwuwymiarowe
+
+```{r table1, echo=FALSE, warning=FALSE}
+g <- table(allegro.data$main_category, allegro.data$pay_option_on_delivery, dnn = c("Kategoria", "ZaPobraniem"))
+kable(prop.table(g, 1), caption = "Popularność płatności przy odbiorze w zależności od kategorii")
+ggplot(as.data.frame(g)) +
+  geom_mosaic(aes(weight = Freq, x = product(ZaPobraniem, Kategoria), fill = ZaPobraniem)) +
+  scale_fill_manual(values = c("brown", "cornflowerblue")) +
+  coord_flip()
+```
+
+Jak widzimy, na Allegro dominuje opcja płatności za pobraniem, szczególnie w tych dominujących kategoriach. Jedynie gry oraz bilety kupowane są częściej z płatnością z góry, co może być związane z faktem, że powyższe dość często sprzedawane są w formie cyfrowej, w przypadku której trudno mówić o czynności "pobierania".
+
+```{r box1, echo=FALSE}
+y <- as.data.frame(table(allegro.data$it_is_brand_zone))
+names(y) <- c("W strefie marek", "Liczba")
+kable(y, caption = "Porównanie liczby sprzedawców markowych i niezależnych")
+ggplot(allegro.data, aes(x = it_is_brand_zone, y = it_seller_rating)) +
+  geom_boxplot() +
+  labs(title = "Strefa marek a ocena sprzedawcy", x = "Czy należy do strefy marek?", y = "Ocena sprzedawcy")
+```
+
+Żadna znacząca prawidłowość nie rzuca się w oczy, wprawdzie wszyscy najwyżej oceniani sprzedawcy pochodzą spoza strefy marek, jednak przeciętne oceny markowych sprzedawców są nieznacznie wyższe, co widać po nieco wyższym położeniu "ciała" prawej skrzynki. Ich wąs jest jednak znacznie krótszy, ponieważ próbka markowych sprzedawców jest znacząco mniejsza.

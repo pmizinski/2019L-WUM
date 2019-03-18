@@ -1,0 +1,128 @@
+---
+title: "Praca domowa nr 1"
+author: "Karol Pysiak"
+date: "7/3/2019"
+output: html_document
+---
+
+```{r setup, include = FALSE, echo =  FALSE, cache = FALSE}
+library(DataExplorer)
+library(funModeling)
+library(dplyr)
+library(ggplot2)
+library(knitr)
+library(data.table)
+data <- read.csv(file = "allegro-api-transactions.csv")
+# data$pay_option_on_delivery <- as.factor(data$pay_option_on_delivery)
+# data$it_is_allegro_standard <- as.factor(data$it_is_allegro_standard)
+# data$pay_option_transfer <- as.factor(data$pay_option_transfer)
+# data$it_is_brand_zone <- as.factor(data$it_is_brand_zone)
+```
+
+Do eksploracji danych będę używał głównie dwóch bibliotek: funModeling i Data Explorer. 
+
+```{r introduction, cache = TRUE}
+kable(t(introduce(data = data)), format = "html")
+```
+
+```{r}
+plot_intro(data)
+```
+
+Jak widać mamy 14 zmiennych w tyum 5 kategorycznych, a 9 ciągłych. Co więcej nasz dataset nie ma pustych komórek.
+
+```{r, include=FALSE, echo=TRUE}
+a <- profiling_num(data = data)
+```
+
+```{r}
+kable(profiling_num(data = data), format = "html")
+```
+
+
+
+```{r plot_num, cache = TRUE}
+plot_num(data = data, bins = 25)
+```
+
+```{r plot_bar}
+a <- freq(select(data, pay_option_on_delivery), input = "pay_option_on_delivery")
+```
+
+```{r}
+a <- freq(select(data, pay_option_transfer), input = "pay_option_transfer")
+```
+
+```{r}
+a <- freq(select(data, it_is_allegro_standard), input = "it_is_allegro_standard")
+```
+
+```{r}
+a <- freq(select(data, it_is_brand_zone), input = "it_is_brand_zone")
+```
+
+```{r}
+kable(categ_analysis(data=data, input = "main_category", target = "it_is_allegro_standard"), format = "html")
+```
+
+```{r}
+a <- freq(data$main_category)
+```
+
+Najpopularniejsze produkty pochodzą z kategorii "Dom i Ogród". Mają one niesamowitą przewagę nad resztą kategorii.
+
+```{r, include=FALSE}
+data$hour <- as.numeric(hour(data$date))
+```
+
+```{r}
+plotar(data=data, input = "hour", target="main_category", plot_type = "histdens")
+```
+
+Większość zakupów z z danej kategorii rozkłada się podobnie w czasie. Dwie kategorie się wyróżniają: "Bilety" i "Nieruchmości".
+
+```{r}
+plotar(data=dplyr::filter(data, data$main_category=="Nieruchomości"), input = "hour", target="main_category", plot_type = "histdens")
+```
+
+To odmienne zachowanie nieruchmości jest spowodowane tym, że zostały w tej kategorii przeprowadzone dwie transakcje i to w godzinach wieczornych.
+
+```{r}
+plotar(data=dplyr::filter(data, data$main_category=="Bilety"), input = "hour", target="main_category", plot_type = "histdens")
+```
+
+Większość kategorii ma dwa skoki popularności, ok. 12 mały i ok. 20 największy. Popularności biletów natomiast ściśle rośnie do 15 , a później ściśle spada. Może to być spowodowane tym, że transakcji w kategorii "Biletty" zostało przeprowadzonych trochę ponad 100, więc mogły to być bilety w większości na jedno wydarzenie i ułożenie tego wykresu może pokazywać w jakim tempie ludzie zauważali informację o możliwym zakupie.
+
+```{r}
+plot(data %>% group_by(hour) %>% summarise(mean_price = mean(price)), type = "l")
+```
+
+Średnia cena utrzymywała się na w miarę różnym poziomie poza wczesnymi godzinami porannymi, ale ten dołek może wynikać z małej liczby transakcji i tej porze.
+
+```{r}
+hist(x = data$hour)
+```
+
+Najmniej transakcji jest przeprowadzanych o wczesnych godzinach porannych, a najwięcej wieczorem.
+
+```{r, include = FALSE}
+data$hour <- NULL
+```
+
+```{r}
+plot_correlation(data = data)
+```
+
+
+
+```{r}
+cross_plot(data, target = "it_is_allegro_standard", input = c("it_seller_rating"))
+```
+
+Wykres ten sugeruje, że czym sprzedający ma wyższą ocenę, tym jest większe prawdopodobieństwo, że jego produkty należą do grupy "Standard Allegro" oznaczającą najlepsze oferty.
+
+```{r}
+cross_plot(data, target = "it_is_allegro_standard", input = c("main_category"))
+```
+
+Jedynie wśród biletów i nieruchomości jest mało będących oznaczonych "Standard Allegro". Poza tymi dwoma przypadkami nie wiedać, żeby kategoria w znaczący sposób wpływała na to czy oferta należy do standardów Allegro.

@@ -1,0 +1,165 @@
+---
+title: "Analiza danych o transakcja"
+author: "DominikRafacz"
+date: "`r format(Sys.time(), '%d - %m - %Y')`"
+output:
+  html_document:
+    df_print: paged
+    toc: true
+    toc_float: true
+    code_folding: hide
+    number_sections: true
+
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+require(dataMaid)
+require(visdat)
+require(dplyr)
+```
+
+# Dane i wstępne przygotowanie
+
+Najpierw wczytujemy dane z pliku i podmieniamy polskie nazwy kategorii na naazwy angielskie. Ponadto wybieramy istotne zmienne (odrzucamy np. id użytkownika, listę kategorii). Zamieniamy zmienne logiczne (o wartościach liczbowych 0 i 1) na kategoryczne.
+
+```{r data, cache=TRUE}
+trans <- read.csv(file = "allegro-api-transactions.csv")
+engnames <- read.csv(file = "allegro-categories-eng.txt", sep = ";")
+trans <- merge(x = trans, y = engnames, by.x = "main_category", by.y = "main_category", all.x = TRUE)
+
+trans <- trans[, c("main_category_eng",
+                   "date", 
+                   "pay_option_on_delivery", 
+                   "pay_option_transfer", 
+                   "seller", 
+                   "price", 
+                   "it_is_allegro_standard", 
+                   "it_quantity", 
+                   "it_is_brand_zone", 
+                   "it_seller_rating", 
+                   "it_location")]
+
+trans2 <- trans # ramka ze zmiennymi logicznymi w postaci factorów
+trans2$it_is_allegro_standard <- as.factor(trans$it_is_allegro_standard)
+trans2$pay_option_on_delivery <- as.factor(trans$pay_option_on_delivery)
+trans2$pay_option_transfer <- as.factor(trans$pay_option_transfer)
+trans2$it_is_brand_zone <- as.factor(trans$it_is_brand_zone)
+
+# wyświetlenie pierwszych linii
+head(trans)
+```
+
+# Wstępne informacje
+
+Sprawdzamy rozmiar ramki danych
+```{r vis}
+dim(trans2)
+```
+
+oraz nazwy zmiennych
+```{r}
+colnames(trans2)
+
+visdat::vis_dat(trans2[sample(1:nrow(trans2), 10000),])
+```
+
+Wybieramy losowo 10000 rekordów, a Funkcja $\texttt{is_dat}$ rysuje wykres z informacjami na temat typów zmiennych w poszczególnych kolumnach. Na osi Y mamy zaznaczone poszczególne rekordy, na osi X poszczególne kolumny. Kolory odpowiadają typom danych. Gdyby gdzieś występowały braki danych, zostałyby one zaznaczone na szaro. Z wykresu widać, że braków w tej próbce nie ma. W następnej sekcji sprawdzimy szczegółowo poprawność danych.
+
+# Poprawność danych
+
+Do sprawdzenia poprawności danych, skorzystamy z paczki $\texttt{dataMaid}$. Funkcja ta wykonuje testy poprawności na poszczególnych kolumnach i wypisuje informacje na ich temat.
+
+```{r check, cache = TRUE}
+dataMaid::check(trans2)
+```
+
+Z wypisanego raportu możemy wyciągnąć ciekawe informacje na temat danych, które mogą pomóc w ich dalszej obróbce:
+* w nazwach kategorii występują zbędne białe znaki,
+* jedna z nazw sprzedającego została wczytana z nieprawidłowymi znakami (najpewniej niepoprawne kodowanie),
+* kolumna zawierająca miejsce sprzedaży przedmiotu jest problematyczna - nazwy są niejednorodne, dużo brakujących znaków, dużo białych znaków, bez jednorodnego formatu.
+
+Ponadto z wyniku tej funkcji wynika, że nie występują braki danych w zbiorze.
+
+# Rozkłady zmiennych
+
+Przyjrzymy się teraz rozkładom zmiennych.
+
+Zmienne kategoryczne:
+```{r cache=TRUE}
+DataExplorer::plot_bar(trans2$main_category_eng)
+DataExplorer::plot_bar(trans2[,c("it_is_allegro_standard", "it_is_brand_zone", "pay_option_on_delivery", "pay_option_transfer")])
+```
+
+Zmienne liczbowe:
+```{r hist, cache=TRUE}
+DataExplorer::plot_histogram(trans2)
+```
+
+Jak widzimy, wszystkie zmienne ciągłe mają rozkłady prawostronnie skośne. Aby móc zobaczyć coś więcej z ich wykresów, dokonamy przekształcenia logarytmicznego - na osi X umieścimy nie zmienną, ale jej logarytm.
+
+```{r hist2, cache=TRUE, warning=FALSE}
+trans3 <- trans2
+trans3[, c("price", "it_quantity", "it_seller_rating")] <- log10(trans3[, c("price", "it_quantity", "it_seller_rating")])
+
+DataExplorer::plot_histogram(trans3)
+```
+
+Ciekawe są wyraźne skoki na progach dziesiętnych w zmiennej oznaczającej liczbę wystawionych przedmiotów - ludzie najczęściej oferują "okrągłą" liczbę przedmiotów (10, 100, 1000).
+
+# Zależności między zmiennymi
+
+Najpierw przyjrzymy się korelacjom między zmiennymi liczbowymi i logicznymi. Pozwala na to funkcja $\texttt{vis_cor}$.
+
+```{r cache = TRUE}
+visdat::vis_cor(trans[, c("pay_option_on_delivery", 
+                          "pay_option_transfer",
+                          "price", 
+                          "it_is_allegro_standard", 
+                          "it_quantity", 
+                          "it_is_brand_zone", 
+                          "it_seller_rating"
+                          )])
+```
+
+Jak widzimy na wykresie, poza oczywistymi korelacjami między zmienną a nią samą, nie występują żadne wyraźne korelacje.
+
+Możemy porównać rozkład cech. Na poniższych wykresach na niebiesko zaznaczone są te pozycje, które posiadają daną cechę, a na czerwono - nie posiadają.
+
+```{r deps, warning=FALSE, fig.width=10, fig.height=10}
+library(gridExtra)
+
+tab <- lapply(c("price", "it_quantity", "it_seller_rating"), FUN = function(n1){
+  lapply(c("it_is_allegro_standard",
+           "it_is_brand_zone",
+           "pay_option_transfer",
+           "pay_option_on_delivery"), FUN = function(n2) {
+             ggplot(data = trans3, aes_(x=as.name(n1), fill = as.name(n2))) +
+              geom_histogram() +
+              guides(fill=FALSE) +
+              theme(axis.text.x = element_blank(), axis.text.y = element_blank(), title = element_text(size = 10)) +
+              ggtitle(n2)
+           }
+         )
+  })
+
+grid.arrange(grobs = unlist(tab, recursive = FALSE), ncol =4, nrow = 4)
+
+```
+
+Widać nieznaczne przesunięcie rozkładu ceny ku wyższym wartościom dla przedmiotów, które posiadają ceche "it_is_brand_zone", lecz poza tym nie występują żadne wyraźne prawidłowości.
+
+# Rozkład w czasie
+Na koniec popatrzmy na rozkład ofert w czasie. Wszystkie pochodzą z jednego dnia:
+```{r}
+unique(format(strptime(x = trans2$date, format = "%Y-%m-%d %H:%M:%S"), format = "%Y-%m-%d"))
+```
+
+Oto ich rozkład na przestrzeni dnia:
+```{r}
+ggplot(data = trans2, aes(x = format(strptime(x = date, format = "%Y-%m-%d %H:%M:%S"), format = "%H"))) +
+  geom_bar() +
+  ylab("time")
+
+```
+
