@@ -1,0 +1,106 @@
+---
+title: "Zadanie 2"
+author: "Olaf Werner"
+date: "March 17, 2019"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(DataExplorer)
+library(mlr)
+library(vtreat)
+library(rpart)
+```
+###Zbiór Danych 
+Będziemy pracować na zbiorze heloc_dataset_v1. Zbiór ten dotyczy oceny ryzyka klientów banku. Załadujmy go.
+
+```{r}
+heloc_dataset_v1<-read.csv("heloc_dataset_v1.csv")
+str(heloc_dataset_v1)
+DataExplorer::plot_missing(heloc_dataset_v1)
+```
+
+Pełny zbiór danych? I same zmienne numeryczne, a klasyfikacja dwuklasowa? Niestety to tylko pozory bo w tym zbiorze są wartości które są flagami które oznaczają brak danych, a niektóre zmienne są tak naprawdę zmiennymi kategorycznymi. Czas to wyczyścić. 
+
+```{r}
+heloc_clean<- heloc_dataset_v1[heloc_dataset_v1$MSinceMostRecentTradeOpen != -9, ]
+heloc_clean[-1]<-apply(heloc_clean[-1],c(1,2),function(x){ ifelse(x %in% c(-7,-8,-9),NA,x)})
+heloc_clean$MaxDelq2PublicRecLast12M<-as.factor(heloc_clean$MaxDelq2PublicRecLast12M)
+heloc_clean$MaxDelqEver<-as.factor(heloc_clean$MaxDelqEver)
+```
+
+Dobra wyczyściliśmy czas na tworzenie modelu!
+
+##Testy
+```{r}
+set.seed(1)
+accs <- rep(0,5)
+for (i in 1:5) {
+indices <- (((i-1) * round((1/5)*nrow(heloc_clean))) + 1):((i*round((1/5) * nrow(heloc_clean))))
+train <- heloc_clean[-indices,]
+test <- heloc_clean[indices,]
+tree <- rpart(RiskPerformance ~ ., train, method = "class")
+pred<-predict(tree,test,type="class")
+conf<-table(test$RiskPerformance,pred)
+accs[i] <- sum(diag(conf))/sum(conf)
+}
+mean(accs)
+```
+
+Prawie 71 procent może jednak da się lepiej? Czas skorzystać z biblioteki vtreat.
+
+```{r}
+accs <- rep(0,5)
+for (i in 1:5) {
+indices <- (((i-1) * round((1/5)*nrow(heloc_clean))) + 1):((i*round((1/5) * nrow(heloc_clean))))
+train <- heloc_clean[-indices,]
+test <- heloc_clean[indices,]
+#czas ulepszyc dane
+treat<-vtreat::mkCrossFrameCExperiment(train,names(train)[-1],"RiskPerformance","Good",rareCount=dim(train)[1]/20,verbose = FALSE)
+train<-treat$crossFrame
+#dzięki rareCount rzadkie poziomy będą usuwane
+test<-prepare(treat$treatments,test,pruneSig = 1/length(treat$scoreFrame$varName))
+#dzięki pruneSig nie ważne zmienne nie są brane pod uwagę
+tree <- rpart(RiskPerformance ~ ., train, method = "class")
+pred<-predict(tree,test,type="class")
+conf<-table(test$RiskPerformance,pred)
+accs[i] <- sum(diag(conf))/sum(conf)
+}
+mean(accs)
+```
+
+Też prawie 71 procent poszło wręcz minimalnie gorzej podejrzewam że to dlatego iż model którego użyłem już był wewnętrznie zoptymalizowany.
+Wypróbujmy inny model.
+
+```{r}
+accs <- rep(0,5)
+for (i in 1:5) {
+  indices <- (((i-1) * round((1/5)*nrow(heloc_clean))) + 1):((i*round((1/5) * nrow(heloc_clean))))
+  train <- heloc_clean[-indices,]
+  test <- heloc_clean[indices,]
+  #czas ulepszyc dane
+  treat<-vtreat::mkCrossFrameCExperiment(train,names(train)[-1],"RiskPerformance","Good",rareCount=dim(train)[1]/20,verbose = FALSE)
+  train<-treat$crossFrame
+  #dzięki rareCount rzadkie poziomy będą usuwane
+  test<-prepare(treat$treatments,test,pruneSig = 1/length(treat$scoreFrame$varName))
+  #dzięki pruneSig nie ważne zmienne nie są brane pod uwagę
+  line <- glm(RiskPerformance ~ ., train, family=binomial(link='logit'))
+  pred<-predict(line,test,type="response")
+  pred<-sapply(pred>0.5,  function(x){ifelse(x,"Good","Bad")})
+  accs[i] <- sum(pred==test$RiskPerformance)/length(test$RiskPerformance)
+}
+mean(accs)
+```
+
+74 procent to już odrobine lepiej. Co więcej bez zamiany nasz model by nie działał bo wystąpiłby nieznany wcześniej poziom.
+
+##Transformacje vtreat
+```{r}
+treat$treatments$scoreFrame[,c('varName','sig','code')]
+```
+
+Zauważmy że vtreat wykonało one hot encoding (code lev) i impact encoding
+
+##Podsumowanie
+Czasami nic nie trzeba robić, a czasami warto transformować dane bo inaczej model nie zadziała.

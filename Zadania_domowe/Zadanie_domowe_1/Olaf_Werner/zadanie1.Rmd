@@ -1,0 +1,132 @@
+---
+title: "Zadanie Domowe 1"
+author: "Olaf Werner"
+date: "7 Marca, 2019"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE,warning = FALSE)
+library(knitr)
+library(magrittr)
+library(dplyr)
+library(dataMaid)
+library(funModeling)
+library(DataExplorer)
+library(lubridate)
+library(readr)
+translate_polish<-read.csv("~/Desktop/zbioryDanyvh/allegro-categories-eng.txt",sep = ";")
+allegro_api_transactions <- read_csv("~/Desktop/zbioryDanyvh/allegro-api-transactions.csv")
+#tlumaczymy
+allegro_api_transactions_clean<-full_join(allegro_api_transactions,translate_polish)
+```
+
+## Dane
+Nasz zbior danych pochodzi z Allegro z dnia 3 kwietnia 2016 roku, zobaczmy jak jest duży i z czego się składa.
+```{r echo=TRUE}
+str(allegro_api_transactions_clean)
+```
+
+Sprawdzimy czy nic nam nie brakuje używając DataExplorer'a
+
+```{r }
+DataExplorer::plot_intro(allegro_api_transactions_clean)
+```
+
+Jak widzimy nie mamy brakujących rekordów. W ramach eksploracji danych skupimy się tylko na kolumnach "price", "it_is_allegro_standard", "it_is_brand_zone", "it_seller_rating", "date","main_category_eng".
+
+```{r}
+allegro_api_transactions_clean<-dplyr::select(allegro_api_transactions_clean,c("price", "it_is_allegro_standard", "it_is_brand_zone", "it_seller_rating", "date","main_category_eng"))
+```
+
+
+Zauważmy że zmienne "it_is_allegro_standard", "it_is_brand_zone" są typu numerical a nie logical zaraz to naprawimy
+```{r}
+allegro_api_transactions_clean$it_is_allegro_standard<-as.logical(allegro_api_transactions_clean$it_is_allegro_standard)
+allegro_api_transactions_clean$it_is_brand_zone<-as.logical(allegro_api_transactions_clean$it_is_brand_zone)
+
+```
+
+Nie musimy też znać daty zakupu co do minuty więc zaokrąglimy do pełnych godzin
+
+```{r}
+allegro_api_transactions_clean %>% mutate(hour=format(floor_date(date,unit = "hour"),"%H")) %>% select(-"date") -> allegro_api_transactions_clean
+```
+
+Dane były czyste więc nie musieliśmy zbyt dużo robić, czas na wizualizacje danych.
+
+##Wizualizacje
+
+###Najważniejsze kategorie
+Na jaki rodzaj produktów wydano najwięcej pieniędzy?
+
+```{r}
+allegro_api_transactions_clean %>% group_by(main_category_eng) %>%
+  summarise(sum=sum(price)) %>% top_n(5,sum) %>% arrange(desc(sum)) %>% mutate(main_category_eng=factor(main_category_eng,main_category_eng)) ->temp
+ggplot(temp,aes(x=main_category_eng,y=sum))+geom_bar(stat = "identity")
+```
+
+###Wpływ godziny na ilosc zakupów
+
+```{r}
+allegro_api_transactions_clean %>% group_by(hour) %>% 
+  summarise(sum=sum(price),median=median(price),n_transactions=n())->allegro_api_transactions_hour
+
+ggplot(allegro_api_transactions_hour,aes(x=hour,y=n_transactions))+geom_bar(stat="identity")+coord_polar()
+
+```
+
+Najwięcej transakcji jest o 20 a później mamy dziwny spadek aktywności.
+
+
+###Rozkład zmiennych dyskretnych
+```{r}
+DataExplorer::plot_bar(allegro_api_transactions_clean)
+```
+
+Zdecydowana większość rzeczy na Allegro nie jest markowych, ale standardy Allegro są przestrzegane częściej niż rzadziej.
+
+###Wpływ markowości i standardów na cenę
+```{r}
+DataExplorer::plot_correlation(allegro_api_transactions_clean)
+```
+
+Nie widać też zbyt mocnych korelacji między ceną a standardami czy markowością.
+
+
+###Rozkład cen
+
+```{r warning=FALSE}
+ggplot(allegro_api_transactions_clean,aes(x=price))+geom_freqpoly()+scale_x_log10()
+sum(allegro_api_transactions_clean$price<1000)/dim(allegro_api_transactions_clean)[1]
+sum(allegro_api_transactions_clean[allegro_api_transactions_clean$price<1000,]$price)/sum(allegro_api_transactions_clean$price)
+```
+Skala jest logarytmiczna więc z wykresu natychmiast wynika niesamowita skośność krzywej. Co więcej 99.3 procent transakcji na Allegro jest poniżej 1000 złotych i odpowiadają one za 80.7% łacznej sumy transakcji.
+
+###Ocena sprzedawców
+
+```{r}
+ggplot(allegro_api_transactions_clean,aes(x=it_seller_rating))+geom_histogram()+geom_vline(xintercept = 100000,col="red")
+sum(allegro_api_transactions_clean$it_seller_rating<100000)/dim(allegro_api_transactions_clean)[1]
+
+```
+Po lewej stronie czerwonej linii jest 95.5% transakcji z rankingiem sprzedawcy poniżej 100000, znowu bardzo skośny wykres
+
+
+###Wpływ oceny sprzedawców na ceny
+```{r}
+DataExplorer::plot_correlation(allegro_api_transactions_clean,type = "continuous")
+```
+
+###Wpływ oceny sprzedawców na ceny poniżej 1000 złotych
+```{r}
+DataExplorer::plot_correlation(allegro_api_transactions_clean[allegro_api_transactions_clean$price<1000,],type = "continuous")
+```
+
+
+Prawie nie ma koleracji
+
+
+##Podsumowanie
+Na Allegro sprzedaje się głównie w miarę tanie, nie markowe rzeczy, ale są też bardzo duże transakcje takie jak sprzedaż działek czy też samochodów. Największa aktywność na Allegro jest późnym popołudniem tudzież nocą. Po za tym po samej ocenie sprzedawcy nie można od razu wywnioskować czy sprzedaje poniżej średniej rynkowej.
+
