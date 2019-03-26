@@ -35,3 +35,7 @@ Kryteria oceniania:
 - 20 pkt - Egzamin.
 
 [Materiały do wykładu](https://github.com/awroble/DataMining/tree/master/MINI_2016)
+
+Ciekawe linki:
+
+  - [Impact encoding jeszcze raz](https://github.com/Dpananos/Categorical-Features)
