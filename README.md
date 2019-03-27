@@ -24,15 +24,16 @@ Kryteria oceniania:
 
 - 10 pkt - zaliczenie 3 kursów w Data Camp.
 - 30 pkt - ćwiczenia z laboratoriów (13 prac domowych za 2 punkty + 4 punkty za aktywność).
-- 20 pkt - Projekt 1 (uczenie nienadzorowane):
+- 20 pkt - projekt 1 (klasyfikacja):
+  - 5 pkt - EDA (faza 1),
+  - 10 pkt - inżynieria cech, wstępne modelowanie (faza 2),
+  - 5 pkt - ostateczne modele, podsumowanie wyników (faza 3).
+- 20 pkt - Egzamin.
+- 20 pkt - Projekt 2 (uczenie nienadzorowane):
   - 5 pkt - EDA (faza 1),
   - 10 pkt - grupowanie, analiza koszykowa, segmentacja (faza 2),
   - 5 pkt - podsumowanie wyników (faza 3).
-- 20 pkt - projekt 2 (klasyfikacja):
-  - 5 pkt - EDA (faza 1),
-  - 10 pkt - model klasyfikacyjny (faza 2),
-  - 5 pkt - podsumowanie wyników (faza 3).
-- 20 pkt - Egzamin.
+
 
 [Materiały do wykładu](https://github.com/awroble/DataMining/tree/master/MINI_2016)
 
