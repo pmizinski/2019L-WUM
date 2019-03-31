@@ -1,0 +1,140 @@
+---
+title: "HubertBanieckiPd2"
+author: "Hubert Baniecki"
+date: "18 03 2019"
+output:
+  html_document:
+    df_print: paged
+    toc: true
+    toc_float: true
+    code_folding: hide
+    number_sections: true
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(WVPlots)
+library(dplyr)
+library(vtreat)
+library(readr)
+library(mlr)
+library(knitr)
+library(forcats)
+set.seed(555)
+```
+
+https://cran.r-project.org/web/packages/vtreat/vignettes/vtreatOverfit.html <br/>
+https://cran.r-project.org/web/packages/vtreat/vignettes/vtreatCrossFrames.html
+
+# Przygotowanie danych
+Wezmę dane z *compass*. Wybrałem w miarę istotne kolumny oraz usunąłem niepotrzebne wiersze. <br/>
+```{r warning = FALSE, results = "hide", message = FALSE}
+enc <- guess_encoding("cox-violent-parsed.csv", n_max = 10000)[[1]]
+dane <- as.data.frame(read_csv("cox-violent-parsed.csv", locale = locale(encoding = enc[1])))
+
+df <- select(dane, name, sex, age, age_cat, race, juv_fel_count, juv_misd_count, juv_other_count, priors_count, c_charge_degree, c_charge_desc, is_recid)
+
+df <- df %>% distinct() %>% filter(is_recid!=-1) %>% filter(c_charge_degree != "O")
+df[df == ""] <- NA
+df <- na.omit(df)
+
+d <- as.data.frame(unclass(df))
+d$is_recid <- as.factor(d$is_recid)
+
+d$rgroup <- sample(c("cal", "train", "test"), nrow(d), replace=TRUE, prob=c(0.3, 0.4, 0.2))
+```
+
+# Model przed kodowaniem
+Sprawdzam działanie modelu przed kodowaniem kolumn.
+```{r warning = FALSE, message = FALSE}
+df1 <- select(d, -name)
+dTrain0 <- df1[df1$rgroup=='train', -12]
+dTest0 <- df1[df1$rgroup=='test', -12]
+
+classif_task <- makeClassifTask(id = "task", data = dTrain0, target = "is_recid")
+classif_lrn <- makeLearner("classif.gbm", predict.type = "prob", par.vals = list(distribution = "bernoulli"))
+
+m0 <- train(classif_lrn, classif_task)
+p0 <- predict(m0, newdata = dTest0, type='response')
+temp0 <-  generateThreshVsPerfData(p0, measures = list(fpr, tpr, mmce))
+
+plotROCCurves(temp0)
+performance(p0, list(auc,acc))
+```
+
+# Model po kodowaniu
+Uzywając `vtreat::designTreatmentsC` zastosuję metody kodowania zmiennych takie jak Impact i One-Hot Encoding na kolumnach kategorycznych. Ogólnie `vtreat` automatycznie wybiera najpopularniejsze poziomy zmiennych kategorycznych i tylko z nich robi kolumny do One-Hot Encoding. <br/>
+Żeby poradzić sobie z zbyt dużą liczbą unikalnych poziomów można wybrać ileś najpopularniejszych, a resztę zakwalifikować jako inne. Suma liczności innych poziomów powinna być mniejsza niż liczność ostatniego konkretnego. <br/>
+Do tego zadania można użyć biblioteki `forecats`. Zastosuję groupowanie na kolumnie `charge_desc` i `charge_degree` przed kodowaniem. Zmniejszy to też szansę na wystąpienie dodatkowych poziomów w zbiorze testowym.
+
+## Jak nie robić
+**Nie przygotowywać kodowania na danych testowych.** <br/>
+**Najlepiej nie używać tych samych danych do przygotowania kodowania i uczenia modelu.** <br/>
+Wynik modelu, w którym przygotowano kodowanie na całych danych:
+```{r warning = FALSE, message = FALSE}
+d$c_charge_desc <- fct_lump(d$c_charge_desc, 5)
+d$c_charge_degree <- fct_lump(d$c_charge_degree, 5)
+  
+dCal <- d[d$rgroup == 'cal', -13]
+dTrain <- d[d$rgroup=='train', -13]
+dTest <- d[d$rgroup=='test', -13]
+
+treatments <- designTreatmentsC(dTrain, varlist = colnames(dTrain)[-12], outcomename='is_recid', outcometarget=1, verbose=FALSE)
+dTrainTreated <- prepare(treatments, dTrain) 
+
+classif_task <- makeClassifTask(id = "task", data = dTrainTreated[1:3500,], target = "is_recid")
+classif_lrn <- makeLearner("classif.gbm", predict.type = "prob", par.vals = list(distribution = "bernoulli"))
+
+m1 <- train(classif_lrn, classif_task)
+p1 <- predict(m1, newdata = dTrainTreated[3501:4400,], type='response')
+temp <-  generateThreshVsPerfData(p1, measures = list(fpr, tpr, mmce))
+
+plotROCCurves(temp)
+performance(p1, list(auc,acc))
+```
+
+Sprawdzenie modelu na osobnym zbiorze, żeby przekonać się, że wynik nic nie znaczy:
+```{r}
+dTestTreated <- prepare(treatments, dTest)
+
+p2 <- predict(m1, newdata = dTestTreated, type='response')
+temp2 <-  generateThreshVsPerfData(p2, measures = list(fpr, tpr, mmce))
+
+plotROCCurves(temp2)
+performance(p2, list(auc,acc))
+```
+
+## Jak robić
+**Użyć innych danych do przygotowania kodowania i uczenia. Wykorzystać do tego zbiór kalibracyjny.** <br/>
+Dzielimy dane na trzy zbiory. Przygotowujemy kodowanie na podstawie jednego z nich. <br/>
+Stosujemy je na zbiorze uczącym oraz testowym. <br/>
+**Po takim zabiegu model wypadł trochę lepiej od tego bez kodowania**.
+```{r}
+pruneSig <- 1/ncol(dTrain)
+
+treatments2 <- designTreatmentsC(dCal, varlist = colnames(dCal)[-12], outcomename='is_recid', outcometarget=1, verbose=FALSE)
+dTrainTreated2 <- prepare(treatments2, dTrain, pruneSig=pruneSig) 
+dTestTreated2 <- prepare(treatments2, dTest, pruneSig=pruneSig) 
+
+classif_task3 <- makeClassifTask(id = "task", data = dTrainTreated2, target = "is_recid")
+
+m3 <- train(classif_lrn, classif_task3)
+p3 <- predict(m3, newdata = dTestTreated2, type='response')
+temp3 <-  generateThreshVsPerfData(p3, measures = list(fpr, tpr, mmce))
+
+plotROCCurves(temp3)
+performance(p3, list(auc,acc))
+```
+
+Poniżej sprawdzamy działanie modelu na zbiorze uczącym.
+**Dzięki zbiorowi kalibracyjnemu ograniczyliśmy overfitting.**
+```{r}
+p4 <- predict(m3, newdata = dTrainTreated2, type='response')
+temp4 <-  generateThreshVsPerfData(p4, measures = list(fpr, tpr, mmce))
+
+plotROCCurves(temp4)
+performance(p4, list(auc,acc))
+```
+
+# Brakujące poziomy
+Grupowanie zmiennych kategorycznych pomaga w tym problemie, jednak nie zawsze w stu procentach skutecznie. Kodowanie w `vtreat` radzi sobie automatycznie z nowymi poziomami w zbiorze, który kodujemy. W zależności od sytuacji wybiera jedną z wielu metod. Może to być wstawienie neutralnych wartości w miejsce niewiadomej, takich jak uśredniona wartość z kolumny lub po prostu zero. Innym sposobem jest zakwalifikowanie wszystkich nowych wartości jako osobna klasa i potraktowanie ich w jeden określony sposób.
