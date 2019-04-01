@@ -41,7 +41,7 @@ train2 <- train[index, ]
 test2 <- train[-index, ]
 
 classif_tsk <- makeClassifTask(id="1", data=train2, target="TripType")
-lrn = makeLearner("classif.ranger", predict.type = "prob")
+lrn = makeLearner("classif.gbm", predict.type = "prob")
 mod = mlr::train(lrn, classif_tsk)
 
 scores = stats::predict(mod, newdata = test2, type="prob")
