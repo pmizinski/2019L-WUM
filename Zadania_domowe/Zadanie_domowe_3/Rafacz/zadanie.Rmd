@@ -1,0 +1,281 @@
+---
+title: "PD3"
+author: "Dominik Rafacz"
+date: "`r format(Sys.time(), '%d - %m - %Y')`"
+output:
+  html_document:
+    theme: simplex
+    df_print: paged
+    toc: true
+    toc_float: true
+    code_folding: hide
+    number_sections: true
+---
+# Wstęp
+```{r bib, include=FALSE}
+library(dplyr)
+library(ggplot2)
+library(forcats)
+```
+
+
+``` {r prep, include=FALSE, cache = TRUE}
+
+dat <- read.csv("train.csv")
+split_data <- function(dat, process_function){
+  dat<-do.call(process_function, list(dat))
+  dat$TripType <- as.factor(dat$TripType)
+  colnames(dat) <- make.names(colnames(dat))
+  # set.seed(987)
+  # ind <- sample(1:nrow(dat), 20000)
+  # dat <- dat[ind,]
+  set.seed(123)
+  ind <- sample(1:nrow(dat), floor(0.6*nrow(dat)))
+  traindat <- dat[ind, ]
+  testdat <- dat[-ind, ]
+  list(train = traindat, test = testdat)
+}
+do_learning_and_predicting <- function(dat) {
+  library(mlr)
+  tsk <- makeClassifTask("model", data = dat$train, target = "TripType")
+  lrn <- makeLearner("classif.ranger", predict.type = "prob")
+  set.seed(567)
+  mdl <- train(lrn, tsk)
+  predict(mdl, newdata=dat$test)
+}
+calculate_error <- function(preds) {
+  columns <- paste0("prob.", preds$data$truth)
+  N <-nrow(preds$data)
+  rows <- 1:N
+  dat <- as.numeric(preds$data[cbind(rows,columns)])
+  dat[dat>1-1e-15] <- 1-1e-15
+  dat[dat<1e-15] <- 1e-15
+  -sum(log(dat))/N
+}
+
+```
+
+W tej pracy domowej spróbujemy wykonać feature extraction na zbiorze danych https://www.kaggle.com/c/walmart-recruiting-trip-type-classification, opisującym wizyty klientów supermarketu. Kazdej wizycie została przyporządkowana etykieta liczbowa (etykiet jest 40), opisująca rodzaj tej wizyty
+
+```{r data, cache=TRUE}
+knitr::kable(head(dat))
+```
+
+Dataset na każdą wizytę w supermarkecie (identyfikowaną przez *VisitNumber*) zawiera od jednego do kilku wierszy - każdy wiersz oznacza jeden zakupiony lub zwrócony typ produktu. Wiersz zawiera informację o ID zakupionego produktu (*Upc*), dziale sklepu (*DepartmentDescription*), szczegółowej kategorii produktu (*FinelineNumber*), liczbie kupionych produktów (*ScanCount*, ujemna wartość oznacza zwrócenie produktu), a także infomacje o rodzaju wizyty (*TripType*) i dniu tygodnia (*Weekday*), które są pozostają takie same dla danego *VisitNumber* w obrębie kilku wierszy.
+
+Skuteczność modelu sprawdzać będziemy za pomocą błędu:
+
+$$ -\frac{1}{N}\sum_{i=1}^N\sum_{j=1}^k y_{i,j} \log p_{i,j}$$,
+
+gdzie $N$ oznacza liczbę obserwacji, $k$ liczbę wynikowych klas, $y_{i,j}$ przyjmuje wartość $1$, gdy wizyta nr $i$ jest ma klasę nr $j$, a $0$ w.p.p., natomiast $p_{i,j}$ to zwrócone przez model prawdopodobieństwo, że klasa $i$-tej wizyty ma numer $j$.  
+
+Będziemy sprawdzać skuteczność poszczególnych wyborów przez wtyrenowanie lasu losowego na zbiorze treningowym (60% datasetu) i liczyć błąd na testowym (40%).
+
+# Proces generowania
+
+W ramce danych, na której będziemy trenować nasz model, chcemy mieć tylko jeden wiersz na każdą wizytę w sklepie. Musimy więc znaleźć sposób, by zagregować informacje na temat jednej wizyty do jednego wiersza. Z oryginalnych wierszy weźmiemy *TripType* jako nasz target oraz *Weekday* jako jeden z predyktorów. Resztę zmiennych będziemy musieli wygenerować.
+
+Naturalnymi pomysłami są tutaj sumaryczna liczba kupionych produktów oraz liczba różnych kupionych produktów. 
+
+**Błąd:**
+
+```{r A, cache = TRUE, warning=FALSE, message=FALSE}
+func1 <- function(dat) {
+  dat %>% 
+    group_by(TripType, Weekday, VisitNumber) %>%
+    summarise(DistinctItems = n(), TotalItems = sum(ScanCount)) %>%
+    ungroup() %>%
+    select(-VisitNumber)
+}
+
+dat %>% split_data(func1) %>% do_learning_and_predicting() %>% calculate_error() -> errA
+errA
+```
+
+ ---
+
+Kolejnym pomysłem jest zaznaczenie, w których działach klient kupił jakiś produkt. Możemy to zliczyć, wykonując one-hot-encoding na kolumnie *DepartmentDescription*, a następnie, przy grupowaniu po wizytach, wziąć maksimum (czyli wartość 1, gdy klient kupił coś z tego działu lub 0 w przeciwnym przypadku) Moglibyśmy podobnie uczynić z *FinelineNumber*, jednak zbiór wartości tego drugiego jest zdecydowanie zbyt duży i wynikowa ramka byłaby za duża.
+
+**Błąd:**
+
+```{r B, cache = TRUE, warning=FALSE, message=FALSE}
+func2 <- function(dat) {
+  cbind(dat, model.matrix(~DepartmentDescription, data = dat)) %>% 
+    select(-DepartmentDescription, -Upc, -FinelineNumber) %>% 
+    group_by(TripType, VisitNumber, Weekday) %>%
+    summarise_at(vars(matches("DepartmentDescription")), max) -> w2
+  
+  dat %>% select(TripType, VisitNumber, Weekday, ScanCount) %>%
+    group_by(TripType, VisitNumber, Weekday) %>%
+    summarise(DistinctItems = n(), TotalItems = sum(ScanCount)) %>%
+    inner_join(w2) %>%
+    ungroup() %>%
+    select(-VisitNumber) 
+}
+
+
+dat %>% split_data(func2) %>% do_learning_and_predicting() %>% calculate_error() -> errB
+errB
+
+```
+
+ --- 
+
+Jak widzimy, błąd znacząco spadł, a więc decyzja była dobra.
+
+Naturalnym rozwinięciem poprzedniego pomysłu jest zaznaczanie nie tego, czy podczas wizyty klient odwiedził dany dział, ale ile sumarycznie przedmiotów z niego kupił.
+
+```{r C, cache = TRUE, warning=FALSE, message=FALSE}
+func3 <- function(dat) {
+  cbind(dat, model.matrix(~DepartmentDescription, data = dat)) %>% 
+    select(-DepartmentDescription, -Upc, -FinelineNumber) %>% 
+    mutate_at(.vars = vars(matches("DepartmentDescription")),
+              .funs = list(function(x) x * dat$ScanCount)) %>%
+    group_by(TripType, VisitNumber, Weekday) %>%
+    summarise_at(vars(matches("DepartmentDescription")), sum) -> w2
+  
+  dat %>% select(TripType, VisitNumber, Weekday, ScanCount) %>%
+    group_by(TripType, VisitNumber, Weekday) %>%
+    summarise(DistinctItems = n(), TotalItems = sum(ScanCount)) %>%
+    inner_join(w2) %>%
+    ungroup() %>%
+    select(-VisitNumber)
+}
+
+
+dat %>% split_data(func3) %>% do_learning_and_predicting() %>% calculate_error() -> errC
+errC
+
+```
+
+Błąd wzrósł, a więc modyfikację tę możemy cofnąć.
+
+Warto zastanowić się nad jeszcze jednym: ujemnymi wartościami *ScanCount*. 
+
+```{r below_zero}
+dat %>% mutate(return=if_else(ScanCount <0, 1, 0 )) %>% 
+  group_by(VisitNumber, TripType) %>% 
+  summarise(returns = sum(return), items = n())  %>% 
+  group_by(TripType) %>% 
+  summarise(ReturnsToTotalRatio = mean(returns/items)) %>%
+  ggplot(aes(x=fct_reorder(as.factor(TripType), ReturnsToTotalRatio), y=ReturnsToTotalRatio)) +
+  geom_bar(stat="identity") +
+  ggtitle("Ratio of returned items per TripType") +
+  xlab("TripType") +
+  ylab("Ratio")
+
+```
+
+Jak widzimy z powyższego wykresu, typ wizyty "999" ma zdecydowanie większy iloraz zwróconych przedmiotów do wszystkich. Dlatego dodamy do datasetu kolumnę, która będzie ten iloraz przechowywać.
+
+**Błąd:**
+
+```{r D, cache = TRUE, warning=FALSE, message=FALSE}
+func4 <- function(dat) {
+  cbind(dat, model.matrix(~DepartmentDescription, data = dat)) %>% 
+    select(-DepartmentDescription, -Upc, -FinelineNumber) %>% 
+    mutate(ReturnedItemsCount = if_else(ScanCount<0, -ScanCount, as.integer(0))) %>%
+    group_by(TripType, VisitNumber, Weekday) %>%
+    mutate_at(vars(matches("DepartmentDescription")), max) %>%
+    mutate(ScanCount=sum(ScanCount), ReturnedItemsCount=sum(ReturnedItemsCount)) %>%
+    mutate(ReturnedItemsRatio = ReturnedItemsCount/(ScanCount+2*ReturnedItemsCount)) %>%
+    select(-ReturnedItemsCount, -ScanCount) %>% 
+    slice(1L) -> w2
+  
+  dat %>% select(TripType, VisitNumber, Weekday, ScanCount) %>%
+    group_by(TripType, VisitNumber, Weekday) %>%
+    summarise(DistinctItems = n(), TotalItems = sum(ScanCount)) %>%
+    inner_join(w2) %>%
+    ungroup() %>% 
+    select(-VisitNumber)
+}
+
+
+dat %>% split_data(func4) %>% do_learning_and_predicting() %>% calculate_error() -> errD
+errD
+
+```
+
+ ---
+
+Poprawa nie jest aż tak duża, jak można by oczekiwać, jednak warto tę kolumnę zachować. Mamy teraz jednak bardzo dużo kolumn. Możemy zastanowić się, czy nie warto zgrupować kilku-kilkunastu kolumn powstałych z one-hot-encodingu *DepartmentDescription*:
+
+```{r collapsing, cache = TRUE}
+dat %>% split_data(func4) -> tmp
+tmp$train %>% 
+  select_at(vars(matches("DepartmentDescription"))) -> tmp
+tmp %>%
+  summarize_all(.funs = list(mean)) ->tmp2
+
+tmp2 <- data.frame(depart = colnames(tmp2), mean = t(tmp2), row.names = NULL)
+
+knitr::kable(tmp2[tmp2$mean < 0.002,])
+
+ggplot(data = tmp2 %>% mutate(depart = fct_reorder(depart, mean)), aes(x = depart, y = mean)) +
+  geom_bar(stat="identity") +
+  ggtitle(label = "Rozklad czestosci zakupow w dzialach") +
+  theme(axis.text.x.bottom = element_blank())
+
+```
+
+Spróbujemy teraz zgrupować te kilka zmiennych:
+
+**Błąd:**
+
+```{r E, cache = TRUE, warning=FALSE, message=FALSE}
+func5 <- function(dat) {
+  cbind(dat, model.matrix(~DepartmentDescription, data = dat)) %>% 
+    select(-DepartmentDescription, -Upc, -FinelineNumber) %>% 
+    mutate(ReturnedItemsCount = if_else(ScanCount<0, -ScanCount, as.integer(0))) -> w1
+  
+  colnames(w1) <- make.names(colnames(w1))
+  
+  w1 %>%
+    mutate(DepartmentDescriptionOTHER =max( 
+             DepartmentDescriptionOTHER.DEPARTMENTS,
+             DepartmentDescriptionCAMERAS.AND.SUPPLIES,
+             DepartmentDescriptionOPTICAL...LENSES,
+             DepartmentDescriptionCONCEPT.STORES,
+             DepartmentDescriptionLARGE.HOUSEHOLD.GOODS,
+             DepartmentDescriptionSEASONAL,
+             DepartmentDescriptionHEALTH.AND.BEAUTY.AIDS)) %>%
+    group_by(TripType, VisitNumber, Weekday) %>%
+    mutate_at(vars(matches("DepartmentDescription")), max) %>%
+    mutate(ScanCount=sum(ScanCount), ReturnedItemsCount=sum(ReturnedItemsCount)) %>%
+    mutate(ReturnedItemsRatio = ReturnedItemsCount/(ScanCount+2*ReturnedItemsCount)) %>%
+    select(-ReturnedItemsCount, -ScanCount) %>% 
+    slice(1L)-> w2
+  
+  dat %>% select(TripType, VisitNumber, Weekday, ScanCount) %>%
+    group_by(TripType, VisitNumber, Weekday) %>%
+    summarise(DistinctItems = n(), TotalItems = sum(ScanCount)) %>%
+    inner_join(w2) %>%
+    ungroup() %>% 
+    select(-VisitNumber,
+           -DepartmentDescriptionOTHER.DEPARTMENTS,
+           -DepartmentDescriptionCAMERAS.AND.SUPPLIES,
+           -DepartmentDescriptionOPTICAL...LENSES,
+           -DepartmentDescriptionCONCEPT.STORES,
+           -DepartmentDescriptionLARGE.HOUSEHOLD.GOODS,
+           -DepartmentDescriptionSEASONAL,
+           -DepartmentDescriptionHEALTH.AND.BEAUTY.AIDS)
+} 
+
+
+dat %>% split_data(func5) %>% do_learning_and_predicting() %>% calculate_error() -> errE
+errE
+```
+
+ ---
+
+Błąd zwiększył się odrobinę, ale w granicach błedu statystycznego, natomiast liczba kolumn się zmniejszyła, więc warto zachować ten zestaw zmmiennych.
+
+# Podsumowanie
+Ostatecznie, w naszym datasecie znajdą się następujące kolumny:
+
+* **TripType** -- target
+* **Weekday** -- kategoryczna, dzień tygodnia
+* **DistinctItems** -- liczbowa, liczba różnych zakupionych produktów
+* **TotalItems** -- liczbowa, sumaryczna liczba wszystkich produktów
+* **ReturnedItemsRatio** -- liczbowa, stosunek zwróconych produktów do wszystkich
+* kolumny kategoryczne **DepartmentDescriptionX** powstałe w wyniku one-hot-encodingu, których wartość wynosi 0, jeśli klient nie odwiedził danego działu i 1 w.p.p; najrzadziej występujących sześć działów jest zgrupowanych w jedną kolumnę.
