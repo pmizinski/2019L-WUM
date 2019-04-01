@@ -1,0 +1,105 @@
+---
+title: "Praca domowa nr 1"
+author: "Małgorzata Wachulec"
+date: "6/3/2019"
+output: html_document
+---
+
+```{r setup, include=FALSE, echo=FALSE}
+source("skrypt.R")
+```
+
+## Wstęp
+
+W tej pracy domowej zawarte są numeryczne i graficzne podsumowania kolumn: price, it_is_allegro_standard, it_is_brand_zone, it_seller_rating and date, wzięte z danych dotyczących tranzakcji Allegro (https://www.dropbox.com/s/360xhh2d9lnaek3/allegro-api-transactions.csv?dl=0), a także przedstawione są niektóre zależności pomiędzy tymi kolumnami.
+
+W fazie eksploracji danych użyte są pakiety funModeling, DataExplorer oraz data.table.
+
+## Podsumowanie pojedynczych zmiennych
+
+Po marge-u na danych i ich opisach oraz odfiltrowaniu danych, wywołałam funkcję plot_histogram() z pakietu DataExplorer oraz funkcję plot_num(), w celu sprawdzenia rozkładów kolumn z numerycznymi wartościami (oraz, żeby porównać te funkcje).  
+
+```{r plot1, cache=TRUE}
+plot_histogram(filtered)
+```
+
+```{r plot2,warning=FALSE,cache=TRUE}
+plot_num(filtered)
+```
+
+Choć plot_num() z pakietu funModeling jest ładniejszy, to w kolumnie price wyświetlił on jedynie wartości bliskie zeru. Funkcja plot_histogram() dla kolumny price, poza wartościami bliskimi 0 wyświetlił także cienki pasek dla innych wartości, co sugeruje, że rzeczywiście kolumna price przyjmuje też inne wartości. 
+
+Dodatkowo kolumny is_it_allegro_standard i is_it_brand_zone przyjmują jedynie 2 wartości: 0 i 1, czy też odpowiedzi: "tak" lub "nie".Teraz sprawdzę, czy moje wnioskowanie jest poprawne (a nie na przykład znowu nie widać jakiejś części wartości, bo ich liczność jest proporcjonalnie mała do wystąpień 0 i 1) poprzez wywołanie funkcji df_status() z pakietu funModeling, żeby zobaczyć podstawowe statystyki tych kolumn.
+
+```{r summary, cache=TRUE}
+df_status(filtered)
+```
+
+Powyższy rekord potwierdza moją teorię, że is_it_allegro_standard i is_it_brand_zone są kolumnami logicznymi. Do tego widzimy też, że kolumna price, choć nie było to oczywiste z wykresów, przyjmuje też inne wartości niż 0.
+
+Kolumna it_seller_rating ma rozkład wykładniczy, natomiast rozkładu zmiennej price nie widać. Spróbujmy ją przekształcić, ustawiając logarytmiczną skalę na osi y:
+
+```{r price, echo=FALSE, warning=FALSE, cache=TRUE}
+ggplot(filtered, aes(x = filtered$price)) + geom_histogram() + scale_y_log10() + labs(x="Price", y = "Count w skali logarytmicznej",title= "Analiza rozkladu kolumny price")
+```
+
+Teraz widzimy, że rozkład kolumny price, tak jak kolumna it_seller_rating, posiada rozkład najbardziej zbliżony do wykładniczego. Możemy też zaobserwować przynajmniej 2 grupy cenowe (a nawet 4) produktów, np. między ok. 20000, a 40000 jest niewielkie wzniesienie sugerujące kawałek rozkładu normalnego dla produktów "droższych".
+
+### Zmienna data
+
+Wszystkie rekordy pochodzą z jednego dnia: 3 kwietnia 2016 roku:
+```{r data, warning=FALSE, cache=TRUE}
+unique(year(filtered$date))
+unique(month(filtered$date))
+unique(day(filtered$date))
+```
+
+Zobrazujmy rozkład ofert w ciągu tego dnia:
+```{r data2, warning=FALSE, echo= FALSE,cache=TRUE}
+ggplot(filtered, aes(x = format(strptime(x = date, format = "%Y-%m-%d %H:%M:%S"), format = "%H"))) + geom_histogram(stat = "count") + labs(x="Godzina", y = "Liczba ofert",title= "Rozklad ofert w ciagu dnia")
+```
+
+Jak widać na wyżej załączonym obrazku w nocy aktywność jest mniejsza, a podczas dnia wpierw rośnie do około południa, następnie trochę się obniża i o 15 zaczyna znów rosnąć do godziny 20. Nie wiadomo czemu około godziny 21 aktywność gwałtownie maleje, lecz ponieważ dane pochodzą z jednego dnia może mieć na to wpływ np. wydarzenie sportowe (3 kwietnia 2016 roku odbywało się ICC Women's Cricket T20 World Cup, ale pewnie nie o to chodziło), lub z jakiegoś powodu serwer został zablokowany (innym pomysłem było sprawdzenie aktywności użytkowników Netflix-a z tego dnia).
+
+Jeszcze ten sam wykres na modłę zegarów wojskowych:
+```{r data3, warning=FALSE, echo= FALSE, cache=TRUE}
+ggplot(filtered, aes(x = format(strptime(x = date, format = "%Y-%m-%d %H:%M:%S"), format = "%H"))) + geom_histogram(stat = "count") + labs(x="",y = "",title= "Rozklad ofert w ciagu dnia") + coord_polar() + theme(axis.text.y = element_blank(),axis.ticks.y = element_blank())
+```
+
+
+## Analiza zależności pomiędzy zmiennymi
+
+Najpierw próbowałam analizować zależności między kolumnami poprzez funkcję correlation_table() z pakietu funModeling, ale ponieważ pokazuje ona zależności dla zaledwie jednej kolumny, dużo lepszym pomysłem było użycie funkcji vis_cor() z pakietu visdat (oczywiście tylko dla zmiennych numerycznych):
+```{r corr1, warning=FALSE, cache=TRUE}
+vis_cor(filtered[, c("it_is_allegro_standard","it_is_brand_zone","price","it_seller_rating")])
+```
+
+Najbardziej widoczną zależnością widoczną na powyższym wykresie jest zależność it_seller_rating i it_is_allegro_standard. Być może allegro ustanawia standard ofert na podstawie tego, jak wyglądają oferty najwyżej ocenianych sprzedawców, co wyjaśniałoby tego typu zależność. Pozostałe, mniej widoczne zależności to it_is_brand_zone - it_seller_rating, co może sugerować, że sprzedawcy markowych rzeczy są lepiej oceniani przez klientów, oraz it_is_brand_zone - price, co może sugerować, że rzeczy markowe kosztują więcej (choć korelacja jest tak niska, że właściwie można ją zignorować).
+
+Na koniec chciałabym jeszcze sprawdzić czy cena ofert albo to, czy są one markowe lub spełniają standard allegro wpływa na to, kiedy są one sprzedawane. Dlatego prześledziłam rozkład ofert w ciągu dnia dla każdej z tych kategorii.
+
+
+```{r corr2, warning=FALSE, echo= FALSE,cache=TRUE}
+brand <- filtered[it_is_brand_zone==1]
+no_brand <- filtered[it_is_brand_zone==0]
+ggplot(brand, aes(x = format(strptime(x = date, format = "%Y-%m-%d %H:%M:%S"), format = "%H"))) + geom_histogram(stat = "count") + labs(x="Godzina", y = "Liczba ofert",title= "Rozklad ofert markowych w ciagu dnia")
+ggplot(no_brand, aes(x = format(strptime(x = date, format = "%Y-%m-%d %H:%M:%S"), format = "%H"))) + geom_histogram(stat = "count") + labs(x="Godzina", y = "Liczba ofert",title= "Rozklad ofert niemarkowych w ciagu dnia")
+```
+
+
+```{r corr3, warning=FALSE, echo= FALSE,cache=TRUE}
+standard <- filtered[it_is_allegro_standard==1]
+no_standard <- filtered[it_is_allegro_standard==0]
+ggplot(standard, aes(x = format(strptime(x = date, format = "%Y-%m-%d %H:%M:%S"), format = "%H"))) + geom_histogram(stat = "count") + labs(x="Godzina", y = "Liczba ofert",title= "Rozklad ofert ze standardem allegro w ciagu dnia")
+ggplot(no_standard, aes(x = format(strptime(x = date, format = "%Y-%m-%d %H:%M:%S"), format = "%H"))) + geom_histogram(stat = "count") + labs(x="Godzina", y = "Liczba ofert",title= "Rozklad ofert bez standardu allegro w ciagu dnia")
+```
+
+
+```{r corr4, warning=FALSE, echo= FALSE,cache=TRUE}
+high_price <- filtered[price<=1000]
+low_price <- filtered[price>1000]
+ggplot(high_price, aes(x = format(strptime(x = date, format = "%Y-%m-%d %H:%M:%S"), format = "%H"))) + geom_histogram(stat = "count") + labs(x="Godzina", y = "Liczba ofert",title= "Rozklad tanszych (<=1000) ofert allegro w ciagu dnia")
+ggplot(low_price, aes(x = format(strptime(x = date, format = "%Y-%m-%d %H:%M:%S"), format = "%H"))) + geom_histogram(stat = "count") + labs(x="Godzina", y = "Liczba ofert",title= "Rozklad drozszych (>1000) ofert allegro w ciagu dnia")
+```
+
+Wykresy podanych kategorii różnią się jedynie w bardzo niewielkim stopniu, co nie pozwala na stwierdzenie, że typ oferty wpływa na czas, w którym się pojawia.
