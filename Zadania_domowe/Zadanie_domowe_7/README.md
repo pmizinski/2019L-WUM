@@ -1,3 +1,3 @@
 # Zadanie domowe 7
 
-Termin oddania: 16 IV 2019 r.
+Termin oddania: 28 V 2019 r.
