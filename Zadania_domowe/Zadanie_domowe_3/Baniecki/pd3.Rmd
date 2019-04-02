@@ -1,0 +1,149 @@
+---
+title: "HubertBanieckiPd3"
+author: "Hubert Baniecki"
+date: "18 03 2019"
+output:
+  html_document:
+    df_print: paged
+    toc: true
+    toc_float: true
+    code_folding: hide
+    number_sections: true
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, warning = FALSE, message = FALSE, cache = TRUE)
+library(dplyr)
+library(mlr)
+library(readr)
+library(randomForest)
+library(tidyr)
+set.seed(555)
+```
+
+# Przygotowanie danych
+
+Dane z Walmart niekonieczne są przystosowane do postawionego nam zadania klasyfikacji `TripType`. Na początku musimy pogrupować je po `Visit Number`. Za "bazową" ramkę danych *można* uznać taką, która zawiera `TripType`, różnicę pomiędzy kupionymi i zwróconymi produktami `ScanCount`, `day` oraz najpopularniejszy z `DepartmentDescription` (lekko pogrupowany, żeby przyjął go randomForest).
+
+Dane wejściowe
+
+```{r}
+enc <- guess_encoding("train.csv", n_max = 10000)[[1]]
+dane <- as.data.frame(read_csv("train.csv", locale = locale(encoding = enc[1])))
+
+data <- read.csv("train.csv")
+
+data
+```
+
+Dane do modelu
+
+```{r}
+data1 <- data %>% 
+  group_by(VisitNumber) %>%
+  summarise(TripType = head(TripType,1),
+            sumScanCount = sum(ScanCount),
+            day = unique(Weekday)[1],
+            DepartmentDescription = names(sort(table(DepartmentDescription), decreasing = TRUE))[1])
+
+
+data1 <- data.frame(data1)
+
+data1$TripType <- as.factor(data1$TripType)
+data1$DepartmentDescription <- forcats::fct_lump(as.factor(data1$DepartmentDescription),30)
+data1$day <- as.numeric(data1$day)
+
+data1
+```
+
+# Bazowy model i błąd
+
+Wynik wydaje się być zadowalający.
+
+```{r}
+set.seed(123)
+m <- sample(1:nrow(data1), floor(0.7*nrow(data1)))
+train <- as.data.frame(data1)[m,]
+test <- as.data.frame(data1)[-m,]
+  
+model <- randomForest(TripType~., data = train)
+scores <- predict(model, test, type = "prob")
+
+myScores <- sapply(1:nrow(test), function(i){
+  scores[i, test$TripType[i]]
+})
+
+mean(-log(pmax(myScores,0.05)))
+
+```
+
+# Ulepszony model i błąd
+
+Do zmiennych dodaję:
+
+* liczbę różnych produktów na paragonie jako `count`
+* liczbę kupionych rzeczy jako `BoughtCount`
+* liczbę zwróconych rzeczy jako `ReturnedCount`
+* czy ktoś zwracał rzecz? jako `Returned`
+* zmienną `DepartmentDescription` przekodowaną na kolumny, z licznością poszczególnych kategorii zakupów
+
+Trzeba było też oczyścić te dane i przekodować nazwy kolumn.
+
+```{r}
+set.seed(123)
+df1 <- data %>% 
+  group_by(VisitNumber) %>%
+  summarise(TripType = first(TripType),
+            sumScanCount = sum(ScanCount),
+            count = n(),
+            BoughtCount = sum(ScanCount[ScanCount>0]),
+            ReturnedCount = sum(ScanCount[ScanCount<0]),
+            Returned = any(ScanCount < 0),
+            day = first(Weekday))
+
+df2 <- data %>% 
+  group_by(VisitNumber, DepartmentDescription) %>% 
+  summarise(count = n()) %>%
+  spread(DepartmentDescription, count, fill=0)
+
+df3 <- data.frame(left_join(df1,df2, by = c("VisitNumber")))
+df3$MENSWEAR <- df3$MENSWEAR + df3$MENS.WEAR
+
+df3 <- df3[,-52]
+a<-1:68
+colnames(df3)[9:76] <- unlist(lapply(a,function(x) paste("V",x, sep="")))
+df3$TripType <- as.factor(df3$TripType)
+df3$day <- as.numeric(df3$day)
+df3$Returned <- as.numeric(df3$Returned)
+
+df3
+```
+
+```{r}
+m <- sample(1:nrow(df3), floor(0.7*nrow(df3)))
+train <- as.data.frame(df3)[m,]
+test <- as.data.frame(df3)[-m,]
+  
+library(randomForest)
+model <- randomForest(TripType~., data=train)
+scores <- predict(model, test, type = "prob")
+
+myScores <- sapply(1:nrow(test), function(i){
+  scores[i, test$TripType[i]]
+})
+
+mean(-log(pmax(myScores,0.05)))
+```
+
+Ogólnie wynik lepszy.
+
+# Podsumowanie
+
+Łatwo da się dodać więcej zmiennych takich jak:
+
+* zakodowany najpopularniejszy `Upc` oraz `FinelineNumber`
+* liczba różnych `Upc` oraz `FinelineNumber`
+* dummy encoding na najpopularniejszym `DepartmentDescription`
+* mądre groupowanie `DepartmentDescription` w zależności od korelacji 
+
+Na pewno wynik modelu byłby lepszy. Oczywistą barierą jest tu jednak moc obliczeniowa. Już ten model uczył się ponad 15 minut. Dodatkowo mnożąc kolumny warto pomyśleć o strategii boostingu i wykorzystaniu innego klasyfikatora.

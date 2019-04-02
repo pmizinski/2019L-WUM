@@ -1,0 +1,185 @@
+---
+title: "Praca Domowa 3"
+author: "Michał Pastuszka"
+date: "`r format(Sys.time(), '%d - %m - %Y')`"
+output:
+  html_document:
+    df_print: paged
+    toc: true
+    toc_float: true
+    code_folding: hide
+    number_sections: true
+---
+
+```{r setup, include=FALSE}
+library(mlr)
+library(data.table)
+library(pracma)
+library(stringi)
+knitr::opts_chunk$set(echo = TRUE)
+dt <- fread("kaggle/train.csv")
+moda <- function(x){ names(sort(table(x), decreasing = TRUE)[1])}
+```
+
+# Wstęp
+
+W tej pracy domowej spróbujemy przeprowadzić ekstrakcję cech na zbiorze Walmart Recruting, aby przewidzieć rodzaj wizyty klienta w sklepie.
+
+```{r head}
+head(dt)
+```
+
+Ponieważ pojedyncze wizyty (kolumna `VisitNumber`) są rozbite na wiele wierszy, nie jest możliwe dokonanie predykcji na surowych danych.
+
+# Ekstrakcja cech
+
+Aby umożliwić stworzenie modelu pogrupujemy rekordy względem kolumny `VisitNumber` i na tej podstawie utworzymy nowe zmienne opisujące poszczególne wizyty.
+Wypróbujemy dwa podejścia: 
+
+## Wersja pierwsza
+Pierwszym podejsciem będzie stworzenie kilku prostych cech podsumowujących wizytę.
+
+```{r simple, echo=FALSE}
+allGrouped0 <- dt[, .(TripType = TripType[1], weekday = Weekday[1], nproducts = sum(ScanCount), mainDep = moda(DepartmentDescription), ndeps = length(unique(DepartmentDescription)), nUniqueProducts = length(unique(Upc)), mainFineline = Mode(FinelineNumber), nFineLines = length(unique(FinelineNumber))), by = VisitNumber]
+
+allGrouped0$weekday <- as.factor(allGrouped0$weekday)
+allGrouped0$mainDep <- as.factor(allGrouped0$mainDep)
+allGrouped0$mainFineline <- ifelse(is.na(allGrouped0$mainFineline), -1, allGrouped0$mainFineline)
+df0 <- as.data.frame(allGrouped0)
+```
+
+```{r first}
+head(df0)
+```
+
+
+## Wersja druga
+Drugą opcją będzie zastosowanie one-hot encoding do zmiennej `DepartmentDescription` i zsumowanie liczby produktów zakupionych w poszczególnych działach. Oprócz tego dodamy kolumny: dzień tygodnia, suma kupionych produktów, liczba różnych zakupionych produktów,  szczegółowa kategoria (Fineline) z której zakupiono najwięcej i liczba różnych kategorii.
+
+```{r ekst, echo=FALSE}
+onehot <- dt
+onehot$DepartmentDescription <- as.factor(onehot$DepartmentDescription)
+onehot <- createDummyFeatures(as.data.frame(onehot))
+onehot <- as.data.table(onehot)
+
+#nie, nie pisałem tego ręcznie
+# v <- ""
+# for(c in colnames(onehot)){
+#   v <- paste0(v, ", ", "sum(", c, ")")
+# }
+
+allGrouped <- onehot[, .(TripType = TripType[1], weekday = Weekday[1], nproducts = sum(ScanCount), nUniqueProducts = length(unique(Upc)), mainFineline = Mode(FinelineNumber), nFineLines = length(unique(FinelineNumber)), sum(DepartmentDescription.1.HR.PHOTO), sum(DepartmentDescription.ACCESSORIES), sum(DepartmentDescription.AUTOMOTIVE), sum(DepartmentDescription.BAKERY), sum(DepartmentDescription.BATH.AND.SHOWER), sum(DepartmentDescription.BEAUTY), sum(DepartmentDescription.BEDDING), sum(DepartmentDescription.BOOKS.AND.MAGAZINES), sum(DepartmentDescription.BOYS.WEAR), sum(DepartmentDescription.BRAS...SHAPEWEAR), sum(DepartmentDescription.CAMERAS.AND.SUPPLIES), sum(DepartmentDescription.CANDY..TOBACCO..COOKIES), sum(DepartmentDescription.CELEBRATION), sum(DepartmentDescription.COMM.BREAD), sum(DepartmentDescription.CONCEPT.STORES), sum(DepartmentDescription.COOK.AND.DINE), sum(DepartmentDescription.DAIRY), sum(DepartmentDescription.DSD.GROCERY), sum(DepartmentDescription.ELECTRONICS), sum(DepartmentDescription.FABRICS.AND.CRAFTS), sum(DepartmentDescription.FINANCIAL.SERVICES), sum(DepartmentDescription.FROZEN.FOODS), sum(DepartmentDescription.FURNITURE), sum(DepartmentDescription.GIRLS.WEAR..4.6X..AND.7.14), sum(DepartmentDescription.GROCERY.DRY.GOODS), sum(DepartmentDescription.HARDWARE), sum(DepartmentDescription.HEALTH.AND.BEAUTY.AIDS), sum(DepartmentDescription.HOME.DECOR), sum(DepartmentDescription.HOME.MANAGEMENT), sum(DepartmentDescription.HORTICULTURE.AND.ACCESS), sum(DepartmentDescription.HOUSEHOLD.CHEMICALS.SUPP), sum(DepartmentDescription.HOUSEHOLD.PAPER.GOODS), sum(DepartmentDescription.IMPULSE.MERCHANDISE), sum(DepartmentDescription.INFANT.APPAREL), sum(DepartmentDescription.INFANT.CONSUMABLE.HARDLINES), sum(DepartmentDescription.JEWELRY.AND.SUNGLASSES), sum(DepartmentDescription.LADIES.SOCKS), sum(DepartmentDescription.LADIESWEAR), sum(DepartmentDescription.LARGE.HOUSEHOLD.GOODS), sum(DepartmentDescription.LAWN.AND.GARDEN), sum(DepartmentDescription.LIQUOR.WINE.BEER), sum(DepartmentDescription.MEAT...FRESH...FROZEN), sum(DepartmentDescription.MEDIA.AND.GAMING), sum(DepartmentDescription.MENS.WEAR), sum(DepartmentDescription.MENSWEAR), sum(DepartmentDescription.NULL), sum(DepartmentDescription.OFFICE.SUPPLIES), sum(DepartmentDescription.OPTICAL...FRAMES), sum(DepartmentDescription.OPTICAL...LENSES), sum(DepartmentDescription.OTHER.DEPARTMENTS), sum(DepartmentDescription.PAINT.AND.ACCESSORIES), sum(DepartmentDescription.PERSONAL.CARE), sum(DepartmentDescription.PETS.AND.SUPPLIES), sum(DepartmentDescription.PHARMACY.OTC), sum(DepartmentDescription.PHARMACY.RX), sum(DepartmentDescription.PLAYERS.AND.ELECTRONICS), sum(DepartmentDescription.PLUS.AND.MATERNITY), sum(DepartmentDescription.PRE.PACKED.DELI), sum(DepartmentDescription.PRODUCE), sum(DepartmentDescription.SEAFOOD), sum(DepartmentDescription.SEASONAL), sum(DepartmentDescription.SERVICE.DELI), sum(DepartmentDescription.SHEER.HOSIERY), sum(DepartmentDescription.SHOES), sum(DepartmentDescription.SLEEPWEAR.FOUNDATIONS), sum(DepartmentDescription.SPORTING.GOODS), sum(DepartmentDescription.SWIMWEAR.OUTERWEAR), sum(DepartmentDescription.TOYS), sum(DepartmentDescription.WIRELESS)), by = VisitNumber]
+
+allGrouped$weekday <- as.factor(allGrouped$weekday)
+allGrouped$mainFineline <- ifelse(is.na(allGrouped$mainFineline), -1, allGrouped$mainFineline)
+df <- as.data.frame(allGrouped)
+```
+
+```{r df}
+head(df)
+```
+
+# Weryfikacja
+
+Tak przygotowane dane podzielimy na zbiór uczący i testowy i obliczymy błąd ze wzoru podanego w opisie zadania:
+$$
+-\frac{1}{N}\sum_{i=1}^N\sum_{j=1}^k y_{i,j} \log p_{i,j}
+$$
+Gdzie $p_{i,j}$ jest prawdopodobieństwem, że rekord $i$ należy do klasy $j$, a $y_{i,j}$ wynosi 1, gdy rekord $i$ należy do klasy $j$ i 0 w przeciwnym przypadku.
+
+```{r err}
+mcls <- function(pred) {
+  cols <- paste0("prob.", pred$data$truth)
+  coli <- match(cols, colnames(pred$data))
+  N <- nrow(pred$data)
+  row <- 1:N
+  out <- as.numeric(pred$data[cbind(row, coli)])
+  out <- pmax(pmin(out, 1-1e-15), 1e-15)
+  return(-sum(log(out))/N)
+}
+```
+
+# Model
+
+## Pierwsza wersja danych
+
+Wyniki otrzymane dla danych w pierwszej wersji są dość niezadowalające:
+```{r model1, cache=TRUE}
+set.seed(419)
+samp <- sample(1:nrow(df0), nrow(df0)*0.7)
+dftrain <- df0[samp,]
+dftest <- df0[-samp,]
+
+task <- makeClassifTask(id = "task", data = dftrain, target = "TripType")
+learner = makeLearner("classif.ranger", predict.type = "prob", par.vals = list(num.trees=200))
+
+trainer <- train(learner, task)
+pred <- predict(trainer, newdata = dftest)
+mcls(pred)
+
+```
+
+## Druga wersja danych
+
+W drugiej wersji otrzymaliśmy znaczne zmniejszenie błędu, który spadł poniżej 1:
+```{r model2, cache=TRUE}
+set.seed(419)
+samp <- sample(1:nrow(df), nrow(df)*0.7)
+dftrain <- df[samp,]
+dftest <- df[-samp,]
+
+task <- makeClassifTask(id = "task", data = dftrain, target = "TripType")
+learner = makeLearner("classif.ranger", predict.type = "prob", par.vals = list(num.trees=200))
+
+trainer <- train(learner, task)
+pred <- predict(trainer, newdata = dftest)
+mcls(pred)
+
+```
+ 
+ 
+
+## Modyfikacja drugiej wersji
+Spróbujemy teraz pogrupować cześć kategorii. Stworzymy nowe kategorie: `GROCERY`, `CLOTHING` i `ELECTRONICS`.
+
+```{r drop}
+
+grocery <- c("DSD GROCERY", "MEAT - FRESH & FROZEN", "DAIRY", "PRODUCE", "GROCERY DRY GOODS", "FROZEN FOODS", "SERVICE DELI", "PRE PACKED DELI", "BAKERY", 
+            "SEAFOOD")
+clothing <- c("SHOES", "BOYS WEAR", "LADIESWEAR", "INFANT APPAREL", "LADIES SOCKS", "PLUS AND MATERNITY", "GIRLS WEAR, 4-6X  AND 7-14", "SLEEPWEAR/FOUNDATIONS", "BRAS & SHAPEWEAR", "SHEER HOSIERY", "SWIMWEAR/OUTERWEAR", "MENS WEAR", "MENSWEAR") #zduplikowana kategoria?
+electronics <- c("CAMERAS AND SUPPLIES", "ELECTRONICS", "PLAYERS AND ELECTRONICS", "OPTICAL - LENSES", "WIRELESS")
+dtgroup <- dt
+dtgroup$DepartmentDescription[dtgroup$DepartmentDescription %in% grocery] <- "GROCERY"
+dtgroup$DepartmentDescription[dtgroup$DepartmentDescription %in% clothing] <- "CLOTHING"
+dtgroup$DepartmentDescription[dtgroup$DepartmentDescription %in% electronics] <- "ELECTRONICS"
+```
+
+```{r obr2, cache=TRUE, echo=FALSE}
+
+dtgroup$DepartmentDescription <- as.factor(dtgroup$DepartmentDescription)
+dtgroup <- createDummyFeatures(as.data.frame(dtgroup))
+dtgroup <- as.data.table(dtgroup)
+
+
+allGrouped2 <- dtgroup[, .(TripType = TripType[1], weekday = Weekday[1], nproducts = sum(ScanCount), nUniqueProducts = length(unique(Upc)), mainFineline = Mode(FinelineNumber), nFineLines = length(unique(FinelineNumber)), sum(DepartmentDescription.1.HR.PHOTO), sum(DepartmentDescription.ACCESSORIES), sum(DepartmentDescription.AUTOMOTIVE), sum(DepartmentDescription.BATH.AND.SHOWER), sum(DepartmentDescription.BEAUTY), sum(DepartmentDescription.BEDDING), sum(DepartmentDescription.BOOKS.AND.MAGAZINES), sum(DepartmentDescription.CANDY..TOBACCO..COOKIES), sum(DepartmentDescription.CELEBRATION), sum(DepartmentDescription.CLOTHING), sum(DepartmentDescription.COMM.BREAD), sum(DepartmentDescription.CONCEPT.STORES), sum(DepartmentDescription.COOK.AND.DINE), sum(DepartmentDescription.ELECTRONICS), sum(DepartmentDescription.FABRICS.AND.CRAFTS), sum(DepartmentDescription.FINANCIAL.SERVICES), sum(DepartmentDescription.FURNITURE), sum(DepartmentDescription.GROCERY), sum(DepartmentDescription.HARDWARE), sum(DepartmentDescription.HEALTH.AND.BEAUTY.AIDS), sum(DepartmentDescription.HOME.DECOR), sum(DepartmentDescription.HOME.MANAGEMENT), sum(DepartmentDescription.HORTICULTURE.AND.ACCESS), sum(DepartmentDescription.HOUSEHOLD.CHEMICALS.SUPP), sum(DepartmentDescription.HOUSEHOLD.PAPER.GOODS), sum(DepartmentDescription.IMPULSE.MERCHANDISE), sum(DepartmentDescription.INFANT.CONSUMABLE.HARDLINES), sum(DepartmentDescription.JEWELRY.AND.SUNGLASSES), sum(DepartmentDescription.LARGE.HOUSEHOLD.GOODS), sum(DepartmentDescription.LAWN.AND.GARDEN), sum(DepartmentDescription.LIQUOR.WINE.BEER), sum(DepartmentDescription.MEDIA.AND.GAMING), sum(DepartmentDescription.NULL), sum(DepartmentDescription.OFFICE.SUPPLIES), sum(DepartmentDescription.OPTICAL...FRAMES), sum(DepartmentDescription.OTHER.DEPARTMENTS), sum(DepartmentDescription.PAINT.AND.ACCESSORIES), sum(DepartmentDescription.PERSONAL.CARE), sum(DepartmentDescription.PETS.AND.SUPPLIES), sum(DepartmentDescription.PHARMACY.OTC), sum(DepartmentDescription.PHARMACY.RX), sum(DepartmentDescription.SEASONAL), sum(DepartmentDescription.SPORTING.GOODS), sum(DepartmentDescription.TOYS)), by = VisitNumber]
+
+allGrouped2$weekday <- as.factor(allGrouped2$weekday)
+allGrouped2$mainFineline <- ifelse(is.na(allGrouped2$mainFineline), -1, allGrouped2$mainFineline)
+df2 <- as.data.frame(allGrouped2)
+```
+
+```{r model3, cache=TRUE}
+set.seed(419)
+samp <- sample(1:nrow(df2), nrow(df2)*0.7)
+dftrain <- df2[samp,]
+dftest <- df2[-samp,]
+
+task <- makeClassifTask(id = "task", data = dftrain, target = "TripType")
+learner = makeLearner("classif.ranger", predict.type = "prob", par.vals = list(num.trees=200))
+
+trainer <- train(learner, task)
+pred <- predict(trainer, newdata = dftest)
+mcls(pred)
+```
+
+Niestety okazuje się, że otrzymaliśmy pewne pogorszenie predykcji. Najlepszą opcją pozostaje więc drugie rozwiązanie.
