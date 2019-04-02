@@ -1,0 +1,148 @@
+---
+title: "Praca Domowa 3"
+author: "Adam Rydelek"
+date: "`r format(Sys.time(), '%d - %m - %Y')`"
+output:
+  html_document:
+    df_print: paged
+    toc: true
+    toc_float: true
+    code_folding: hide
+    number_sections: true
+---
+
+```{r setup, include=FALSE}
+library(dplyr)
+library(mlr)
+library(DALEX)
+library(auditor)
+set.seed(1)
+x <- readr::read_csv("sample_submission.csv")
+test <- read.csv("test.csv", stringsAsFactors = TRUE)
+train <- read.csv("train.csv", stringsAsFactors = TRUE)
+```
+
+# Wprowadzenie
+
+Tematem pracy jest przeprowadzenie Feature Engineering na zbiorze danych z **Walmart**. Na początek krótkie przedstawienie zbioru:
+
+```{r echo=TRUE}
+summary(train)
+DT::datatable(head(train,100))
+```
+
+Naszym Target'em jest zmienna *TripType*. Zobaczmy, jak poradzi sobie model **gbm** na danych bez żadnych modyfikacji.
+
+```{r echo=FALSE, include=FALSE, cache=TRUE}
+train <- na.omit(train)
+set.seed(1)
+index <- sample(1:nrow(train), floor(0.65*nrow(train)))
+train2 <- train[index, ]
+test2 <- train[-index, ]
+
+classif_tsk <- makeClassifTask(id="1", data=train2, target="TripType")
+lrn = makeLearner("classif.gbm", predict.type = "prob")
+mod = mlr::train(lrn, classif_tsk)
+
+scores = stats::predict(mod, newdata = test2, type="prob")
+
+eval3 <- predict(mod, newdata=test2, type = "prob")
+
+eval4 <- sapply(1:nrow(testFeatures2), function(i){
+  eval3$data[i, testFeatures2$TripType[i]]
+})
+
+
+```
+```{r echo=FALSE}
+data.frame(performance(scores,  measures = list(mmce, acc)))
+data.frame(LogErr=mean(-log(pmax(eval4,0.05))))
+```
+Jak można zauważyć model nie radzi sobie dobrze na tych danych, spróbuję to poprawić za pomocą zamiany zmiennych na inne, które będą lepiej współpracowały z modelem predykcyjnym.
+
+# Feature Engineering
+
+Jako, że podczas jednej wycieczki do sklepu ludzie kupują wiele przedmiotów to dla danego *Visit Number* było kilka różnych wartości DepartmentDescription, Upc, czy FinelineNumber. Uznałem, że najbardziej logiczne będzie sprowadzenie ich do najczęstszej kategorii występującej podczas jednych zakupów. W tem sposób powstały zmienne *MostFrequentDepartment*, *MostFrequentFineline*, *MostFrequentUPC*. Aby ujednolicić jeszcze bardziej osobne wizyty dodałem kolumnę *ProductCount*, która sumowała liczbę produktów zakupionych na raz. Na koniec zliczyłem ilość przedmiotów kupionych ogółem i tych zwróconych, na podstawie czego powstała kolumna *BoughtByReturned*, która oznacza (ilość kupionych przedmiotów bez zwrotów)/ilość kupionych przedmiotów ogółem. Sprójrzmy na podsumowanie ramki danych po tych modyfikacjach.
+
+```{r echo=TRUE, include=FALSE, cache=TRUE}
+set.seed(1)
+trainFeatures <- train
+
+h <- trainFeatures %>% group_by(VisitNumber) %>% summarise(ProductCount = n())
+train3 <- left_join(trainFeatures,h)
+j <- train3 %>% group_by(VisitNumber) %>% summarise(MostFrequentDepartment = names(which(table(DepartmentDescription) == max(table(DepartmentDescription)))[1]))
+train3 <- left_join(train3, j)
+k <- train3 %>% group_by(VisitNumber) %>% summarise(Bought = sum(ScanCount > 0),Returned = sum(ScanCount < 0))
+train3 <- left_join(train3, k)
+l <- train3 %>% group_by(VisitNumber) %>% summarise(MostFrequentFineline = train3$FinelineNumber[n_distinct(FinelineNumber)])
+train3 <- left_join(train3, l)
+m <- train3 %>% group_by(VisitNumber) %>% summarise(MostFrequentUPC = train3$Upc[n_distinct(Upc)])
+train3 <- left_join(train3, m)
+train3$BoughtByReturned = train3$Bought/(train3$Bought+train3$Returned)
+
+train4 <- select(train3, TripType, VisitNumber, Weekday, ProductCount, MostFrequentDepartment, MostFrequentFineline, MostFrequentUPC, BoughtByReturned)
+train4 <- unique(train4)
+train4[sapply(train4, is.character)] <- lapply(train4[sapply(train4, is.character)], 
+                                             as.factor)
+
+index2 <- sample(1:nrow(train4), floor(0.65*nrow(train4)))
+trainFeatures2 <- train4[index2, ]
+testFeatures2 <- train4[-index2, ]
+
+
+
+```
+```{r echo=TRUE}
+summary(train4)
+DT::datatable(head(train4,100))
+```
+
+
+Teraz sprawdzę, czy te działania przyniosły poprawę działania modelu.
+
+```{r echo=FALSE, include=FALSE, cache=TRUE}
+classif_tsk2 <- makeClassifTask(id="2", data=trainFeatures2, target="TripType")
+mod2 = mlr::train(lrn, classif_tsk2)
+
+scores = stats::predict(mod2, newdata = testFeatures2, type="prob")
+eval <- predict(mod2, newdata=testFeatures2, type = "prob")
+
+eval2 <- sapply(1:nrow(testFeatures2), function(i){
+  eval$data[i, testFeatures2$TripType[i]]
+})
+```
+```{r echo=TRUE}
+data.frame(performance(scores,  measures = list(mmce, acc)))
+data.frame(LogErr=mean(-log(pmax(eval2,0.05))))
+```
+
+Jak widać model działa lepiej zarówno porównując *mmce*, *auc*, oraz *błąd logarytmiczny*. Czy było to jednak tylko szczęście, czy na prawdę dodane zmienne są istotne? Pomocny w udzieleniu na to pytanie odpowiedzi okaże się pakiet `DALEX`, którym porównam *variable importance*, czyli istotność zmiennych.
+
+# Porównanie
+
+## Model bez modyfikacji danych
+```{r echo=FALSE, cache=TRUE}
+custom_predict <- function(object, newdata) {pred <- predict(object, newdata=newdata)
+  response <- pred$data$response
+  return(as.numeric(response))}
+
+explainer2 <- explain(mod, data = train2[,2:7], y = train2$TripType, predict_function = custom_predict, label="model")
+
+mp2 <- model_performance(explainer2)
+
+vi2 <- variable_importance(explainer2, loss_function = loss_root_mean_square, type="difference")
+plot(vi2)
+```
+
+## Model z Feature Engineering
+
+```{r echo=FALSE, cache=TRUE}
+explainer <- explain(mod2, data = trainFeatures2[,2:8], y = trainFeatures2$TripType, predict_function = custom_predict, label="model")
+
+mp <- model_performance(explainer)
+
+vi <- variable_importance(explainer, loss_function = loss_root_mean_square, type="difference")
+plot(vi)
+```
+
+Można zauważyć, że dodane kolumny zostały zakwalifikowane jako najbardziej istotne, oraz po wzięciu pod uwagę skali obu wykresóW, miały większy wpływ niż kolumny niezmienione. Oznacza to, że proces Feature Engineering można uznać za udany.

@@ -1,0 +1,203 @@
+---
+title: "Praca Domowa 2"
+author: "Witold Merkel"
+date: "18 03 2019"
+output:
+  html_document:
+    df_print: paged
+    toc: true
+    toc_float: true
+    code_folding: hide
+    number_sections: true
+---
+
+```{r,echo=FALSE, include=FALSE, warning=FALSE, message=FALSE, error=FALSE, cache=TRUE}
+knitr::opts_chunk$set(echo = TRUE)
+library(readr)
+library(dplyr)
+library(vtreat)
+library(mlr)
+library(forcats)
+library(DataExplorer)
+library(visdat)
+library(knitr)
+library("kableExtra")
+library("scales")
+require(gridExtra)
+
+# data
+options(stringsAsFactors = FALSE)
+api <- read_csv("allegro-api-transactions.csv")
+txt <- read.delim("allegro-categories-eng.txt", sep = ";")
+colnames(txt)[1] <- "main_category"
+data <- full_join(api, txt)
+data <- data[1:10000, ]
+dataen <- data
+
+# Model 1
+dataen$pay_option_on_delivery <- as.factor(dataen$pay_option_on_delivery)
+classif_task1en <- makeClassifTask(id = "task", data = select(dataen, -c(2, 4, 7, 13, 14, 15)), target = "pay_option_on_delivery")
+classif_lrn1en <- makeLearner("classif.ada", predict.type = "prob")
+
+# Wydajność 1
+cv1en <- makeResampleDesc("CV", iters = 2)
+r1en <- resample(classif_lrn1en, classif_task1en, cv1en, measures = list(acc, auc, tpr, ppv, f1)) 
+
+#######################################################################################################################
+
+# Przygotowanie
+treatment <- vtreat::designTreatmentsC(dframe = data,
+                                       varlist = colnames(data),
+                                       outcomename = 'pay_option_on_delivery',
+                                       outcometarget = 1)
+
+scoreFrame <- treatment$scoreFrame
+
+# Kolumny do zatrzymania
+vars <- scoreFrame$varName[(scoreFrame$code %in% c("catN", "clean"))]
+
+# Przekodowanie
+treated_data <- vtreat::prepare(data,
+                               treatmentplan = treatment,
+                               varRestriction = vars)
+
+# Model
+treated_data$pay_option_on_delivery <- as.factor(treated_data$pay_option_on_delivery)
+classif_task2en <- makeClassifTask(id = "task", data = treated_data, target = "pay_option_on_delivery")
+classif_lrn2en <- makeLearner("classif.ada", predict.type = "prob")
+
+# Wydajność
+cv2en <- makeResampleDesc("CV", iters = 2)
+r2en <- resample(classif_lrn2en, classif_task2en, cv2en, measures = list(acc, auc, tpr, ppv, f1)) 
+
+##################################################################################################################
+
+# Porównanie modeli
+przed_kod <- r1en$aggr
+po_kod <- r2en$aggr
+
+##################################################################################################################
+
+# Wykresy
+fiten1 <- train(classif_lrn1en, classif_task1en)
+preden1 <- predict(fiten1, task = classif_task1en)
+rocen1 <- generateThreshVsPerfData(preden1, list(fpr, tpr))
+
+fiten2 <- train(classif_lrn2en, classif_task2en)
+preden2 <- predict(fiten2, task = classif_task2en)
+rocen2 <- generateThreshVsPerfData(preden2, list(fpr, tpr))
+
+##################################################################################################################
+##################################################################################################################
+##################################################################################################################
+
+# data
+options(stringsAsFactors = FALSE)
+api <- read_csv("allegro-api-transactions.csv")
+txt <- read.delim("allegro-categories-eng.txt", sep = ";")
+colnames(txt)[1] <- "main_category"
+data <- full_join(api, txt)
+data <- data[1:10000, ]
+datam <- data
+datam$categories <- fct_lump(datam$categories, 4)
+
+# Model 1
+datam$pay_option_on_delivery <- as.factor(datam$pay_option_on_delivery)
+classif_task1m <- makeClassifTask(id = "task", data = select(datam, -c(2, 4, 7, 13, 14, 15)), target = "pay_option_on_delivery")
+classif_lrn1m <- makeLearner("classif.ada", predict.type = "prob")
+
+# Wydajność 1
+cv1m <- makeResampleDesc("CV", iters = 2)
+r1m <- resample(classif_lrn1m, classif_task1m, cv1m, measures = list(acc, auc, tpr, ppv, f1)) 
+
+#######################################################################################################################
+
+# Model 2
+datam$pay_option_on_delivery <- as.factor(datam$pay_option_on_delivery)
+classif_task2m <- makeClassifTask(id = "task", data = select(datam, -c(2, 4, 7, 13, 14, 15)), target = "pay_option_on_delivery")
+classif_lrn2m <- makeLearner("classif.ada", predict.type = "prob")
+
+# Wydajność 2
+cv2m <- makeResampleDesc("CV", iters = 2)
+r2m <- resample(classif_lrn2m, classif_task2m, cv2m, measures = list(acc, auc, tpr, ppv, f1)) 
+
+##################################################################################################################
+
+# Porównanie modeli
+merge_przed <- r1m$aggr
+merge_po <- r2m$aggr
+
+##################################################################################################################
+
+# Wykresy
+fit1m <- train(classif_lrn1m, classif_task1m)
+pred1m <- predict(fit1m, task = classif_task1m)
+roc1m <- generateThreshVsPerfData(pred1m, list(fpr, tpr))
+
+fit2m <- train(classif_lrn2m, classif_task2m)
+pred2m <- predict(fit2m, task = classif_task2m)
+roc2m <- generateThreshVsPerfData(pred2m, list(fpr, tpr))
+```
+
+# Wprowadzenie
+
+Celem tego raportu jest opisane, a potem sprawdzenie czy `impact encoding` oraz `one-hot encoding` lub `łączenie rzadkich poziomów` wpłynie na poprawność algorytmu klastfikacji, który determiuje czy było płacone przy odbiorze. W całym raporcie pracuje na próbce o rozmiarz 10 000, w celu przyśpieszenia pracy.
+
+```{r,echo=FALSE, warning=FALSE, message=FALSE, error=FALSE, cache=TRUE}
+plot_missing(data)
+vis_dat(data)
+```
+
+Jak widać dane nie posiadają braków, co znacznie ułatwi pracę, ponieważ część algorytmów nie pozwalan na `NA`.
+
+# Omówienie encodingu
+
+```{r,echo=FALSE, warning=FALSE, message=FALSE, error=FALSE, cache=TRUE}
+scoreFrame[,c('varName','sig','code')]
+```
+
+Można zauważyć, że w naszym przypadku algorytm przekodował niektóre zmienne, więc będzie można zobaczyć czy to wpłynie na wynik algorytmu `classif.ada`.
+
+## Wartości liczbowe
+
+```{r,echo=FALSE, warning=FALSE, message=FALSE, error=FALSE, cache=TRUE}
+przed_kod
+po_kod
+```
+
+Widać, że w przypadku tego konkretnego algorytmu kodowanie w żaden znaczący sposób nie wpłyneło na wartości tych metryk. Przyjrzyjmy się teraz krzywej `ROC` i zobaczmy jak wyglądają dla obu przypadów.
+
+## Wykresy
+
+```{r,echo=FALSE, warning=FALSE, message=FALSE, error=FALSE, cache=TRUE}
+plotROCCurves(rocen1)
+plotROCCurves(rocen2)
+```
+
+Krzywe na pierwszy rzut oka są takie same, dopiero po dokładnej obserwacji widać minimalne różnice, potwierdza to obserwacje z przed chwili.
+
+# Omówienie łączenia poziomów
+
+Zdecydowałem się ograniczyć ilość poziomów zmiennej `categories` do 4, aby przetestować czy tak drastyczna zmiana (pierwotnie ponad 9000) jakoś wpłynie na wyniki.
+
+## Wartości liczbowe
+
+```{r,echo=FALSE, warning=FALSE, message=FALSE, error=FALSE, cache=TRUE}
+merge_przed
+merge_po
+```
+
+Widać, że w przypadku tego konkretnego algorytmu kodowanie w żaden znaczący sposób nie wpłyneło na wartości tych metryk. Przyjrzyjmy się teraz krzywej `ROC` i zobaczmy jak wyglądają dla obu przypadów.
+
+## Wykresy
+
+```{r,echo=FALSE, warning=FALSE, message=FALSE, error=FALSE, cache=TRUE}
+plotROCCurves(roc1m)
+plotROCCurves(roc2m)
+```
+
+Krzywe na pierwszy rzut oka są takie same, dopiero po dokładnej obserwacji widać minimalne różnice, potwierdza to obserwacje z przed chwili.
+
+# Podsumowanie
+
+Jak widać w tym przypadku, zmiana kodowania czy zmniejszenie ilości leveli na jednej zmienne znacząco nie wpłyneły na wyniki, jednak lekkie ulepszenie pokazuje, że w przypadku większego problemu w danych lub przy zmniejszeniu leveli wszędzie pozawala nam domyślać się, że ulepszenie będzie faktycznie większe.

@@ -1,0 +1,111 @@
+---
+title: "WUM Praca Domowa nr 1"
+author: "Bartłomiej Granat"
+date: "`r format(Sys.time(), '%d - %m - %Y')`"
+output:
+  html_document:
+    df_print: paged
+    toc: true
+    toc_float: true
+    code_folding: hide
+    number_sections: true
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, cache = TRUE)
+
+source("script.R")
+```
+
+# Wstęp
+
+W poniższym raporcie przedstawione są wstępne badania eksploracyjne zbioru danych z Allegro. Wykorzystuje głównie biblioteki $ggplot2$, $dplyr$, $DataExplorer$ oraz $funModeling$.
+
+## Pierwsze spojrzenie na dane:
+
+```{r}
+colnames(df)
+introduce(df)
+plot_intro(df)
+summary(df)
+```
+
+Powyższe tabele oraz wykres od razu dają nam wiele informacji o naszym zbiorze. Nie ma on brakujących danych co ułatwi dalszą analizę. Ponadto widzimy, które zmiennę są ciągłe, a które kategoryczne, a także ile ich jest i jakie mają nazwy.
+
+# Zmienne kategoryczne
+
+Przyjrzymy się teraz kluczowym zmiennym kategorycznym. Te, które nie zostały zawarte, mają zbyt wiele unikalnych wartości i ciężko je zbadać bez uprzedniej obróbki danych. Wygodnym narzędziem do analizy zmiennych tego typu są wykresy słupkowe.
+
+```{r}
+p5
+```
+
+Widzimy, że przedmioty powiązane z domem i ogrodem stanowią największy udział w zamówieniach z portalu Allegro. Można wywnioskować także, że nie jest to portal, na którym znajdziemy mieszkanie, bądź dom na sprzedaż.
+
+```{r}
+figure1
+```
+
+Powyższe wykresy zamieściłem razem, ponieważ wszystkie mają jedynie dwie zmienne i są łatwe do interpretacji. Pozwalają jednak zdobyć w łatwy sposób ogląd na tendencje użytkowników zamawiającyc lub wystawiających oferty na Allegro.
+
+# Zmienne ciągłe
+
+Do eksploracji zmiennych ciągłych wykorzystałem wykresy skrzynkowe oraz funkcję $summary$ zwracającą najważniejsze dane statystyczne o zmiennej. Aby zmniejszyć obciążenie pamięci przez wykresy do ich generowania brałem podzbiór zawierający co setny wiersz oryginalnej ramki danych.
+
+```{r}
+p6
+price_summ
+```
+
+Widzimy, że cena zamówień w portalu Allegro zwykle jest bardzo mała, jednak przez dużą liczbę danych odstających ( zapewne są to przedmioty takie jak samochody czy nieruchomości ) wykres skrzynkowy nie daje nam zbyt wiele informacji. Dzięki podsumowaniu statystycznemu widzimy jakie kwoty zamówień występują najczęściej.
+
+```{r}
+p7
+rating_summ
+```
+
+Dla ocen sprzedających mamy podobną sytuację jak dla cen. W tym przypadku przewaga niskich ocen może wynikać z dużej ilości sprzedających posiadających małą ilość przedmiotów na aukcjach.
+
+```{r}
+p8
+date_summ
+```
+
+Dla godzin w danym dniu wykres skrzynkowy mówi nam już bardzo wiele. Możemy jasno zauważyć tendencję do popołudniowych zakupów. Można nawet pomyśleć, że ludzie głównie kupują na allegro, gdy mają zaraz skończyć pracę. 
+
+# Zależności między zmiennymi
+
+Pakiety $corrplot$ i $minerva$ pozwalają nam pokazać tabelę korelacji na dwa sposoby. Pierwszy w sposób bardziej graficzny pokazuje, które wartości są skorelowane, jednak na drugim łatwiej widzimy, że wartości te są nadal bardzo małe i nie są na tyle silnie skorelowane by uwzględniać to na przykład przy redukcji wymiarów ramki danych.
+
+```{r echo = FALSE}
+corrplot(mine_res_hd$MIC, 
+         method="circle",
+         col=brewer.pal(n=10, name="PuOr"),
+         type="lower", 
+         tl.col="red",
+         tl.cex = 0.9, 
+         tl.srt=90, 
+         diag=FALSE, 
+         is.corr = F 
+         
+)
+corrplot(mine_res_hd$MIC, 
+                  method="color",
+                  type="lower", 
+                  number.cex=0.7,
+                  addCoef.col = "black", 
+                  tl.col="red", 
+                  tl.srt=90, 
+                  tl.cex = 0.9,
+                  diag=FALSE, 
+                  is.corr = F 
+)
+```
+
+# funModeling
+
+Wykorzystując pakiet funModeling można na przykład w łatwy sposób stworzyć wykresy gęstości danej zmiennej z podziałem na kategorie. Przerywana linia pionowa oznacza średnią wartość zmiennej. Na poniższym wykresie widzimy, że średnio sprzedawcy mający aukcje nie spełniające standardów allegro mają niższy rating.
+
+```{r}
+plotar(data = df_small, input = "it_seller_rating", target = "it_is_allegro_standard", plot_type="histdens")
+```
