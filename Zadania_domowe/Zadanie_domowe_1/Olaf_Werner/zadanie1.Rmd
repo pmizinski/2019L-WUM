@@ -15,8 +15,9 @@ library(funModeling)
 library(DataExplorer)
 library(lubridate)
 library(readr)
-translate_polish<-read.csv("~/Desktop/zbioryDanyvh/allegro-categories-eng.txt",sep = ";")
-allegro_api_transactions <- read_csv("~/Desktop/zbioryDanyvh/allegro-api-transactions.csv")
+#wczytujemy zbiory danych
+#translate_polish<-read.csv("~/Desktop/zbioryDanyvh/allegro-categories-eng.txt",sep = ";")
+#allegro_api_transactions <- read_csv("~/Desktop/zbioryDanyvh/allegro-api-transactions.csv")
 #tlumaczymy
 allegro_api_transactions_clean<-full_join(allegro_api_transactions,translate_polish)
 ```
