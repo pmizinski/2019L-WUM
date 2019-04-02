@@ -1,0 +1,244 @@
+---
+title: "Feature Engineering"
+author: "Micha³ Stawikowski"
+date: "`r format(Sys.time(), '%d - %m - %Y')`"
+output: 
+  html_document:
+    theme: flatly
+    df_print: paged
+    toc: true
+    toc_float: true
+    code_folding: hide
+    number_sections: true
+---
+```{r setup, cache = F}
+knitr::opts_chunk$set(cache=TRUE)
+```
+
+```{r echo=FALSE, include=FALSE, warning=FALSE, message=FALSE}
+library(DataExplorer)
+library(ggplot2)
+library(readr)
+library(knitr)
+library(dplyr)
+library(mlrCPO)
+library(mlr)
+library(tidyr)
+library(dummies)
+library(randomForest)
+library(forcats)
+library(DALEX)
+# Wczytywanie
+
+data_raw <- read.table("train.csv", sep=",", head=T)
+
+# train_set <- sample_frac(data, 0.6)
+# test_set <- setdiff(data, train_set)
+```
+#Wstêp
+
+W tym raporcie przedstawiê wyniki in¿ynierii cech przeprowadzonej na zbiorze danych dotycz¹cym zakupów w sklepach `Walmart`. Celem `klasyfikacji multiklasowej` na tych danych jest okreœlenie zmiennej `TripType`, czyli kategorii przeprowadzonych zakupów. Tak prezentuje siê ramka danych i zmienne, którymi bêdziemy siê kierowaæ przy klasyfikacji.
+```{r warning=FALSE, message=FALSE}
+#Krótka EDA
+introduce(data_raw)
+head(data_raw)
+```
+
+Postaram siê pokazaæ jak du¿¹ poprawê w skutecznoœci klasyfikacji mo¿e przynieœæ prosta obróbka danych. Na pocz¹tku zaprezentujê zmiany, które dona³em w wyjsciowej ramce danych, a nastêpnie porównamy skutecznoœci modelu klasyfikuj¹cego przed i po dodaniu nowych cech. Surowa ramka danych nie sk³ada siê z unikatowych wizyt w sklepie, odbije siê to prawdopodbnie na skutecznoœci trenowanego na niej modelu.
+
+# Feature engineering
+
+```{r eval=FALSE, message=FALSE, warning=FALSE, include=TRUE}
+
+data <- na.omit(data_raw)
+
+dataD <- cbind(data, dummy(data$DepartmentDescription, sep = "_"))
+
+
+dataD <- dplyr::select(dataD, -c("TripType", "Weekday", "Upc", "ScanCount","FinelineNumber","DepartmentDescription"))
+
+dataDFixed <- dataD %>% group_by(VisitNumber) %>% summarise_all(list(sum))
+
+colnames(dataDFixed) <- make.names(names(dataDFixed),unique = F)
+
+
+
+```
+```{r}
+head(dataDFixed)
+```
+
+
+Na pocz¹tku za pomoc¹ `dummy variables` zakodowaliœmy zmienn¹ `DepartmentDescription`, w celu póŸniejszego grupowanie danych.
+
+```{r eval=FALSE, message=FALSE, warning=FALSE, include=TRUE}
+#Grupowanie i sumowanie Department Descprition po podobieñstwie
+
+dataSum <- 
+dataDFixed %>% 
+  rowwise() %>% 
+  mutate(Food=sum(data_CANDY..TOBACCO..COOKIES, data_FROZEN.FOODS,data_DAIRY,data_GROCERY.DRY.GOODS,data_MEAT...FRESH...FROZEN,
+                  data_SEAFOOD,data_BAKERY,data_COMM.BREAD,data_COOK.AND.DINE,
+                  na.rm = T))
+
+dataSum <- 
+dataSum %>% 
+  rowwise() %>% 
+  mutate(Lens=sum(data_OPTICAL...LENSES, data_OPTICAL...FRAMES,
+                  na.rm = T))
+
+
+dataSum <- 
+dataSum %>% 
+  rowwise() %>% 
+  mutate(MensWear=sum(data_MENSWEAR,data_MENS.WEAR,
+                  na.rm = T))
+
+dataSum <- 
+dataSum %>% 
+  rowwise() %>% 
+  mutate(Clothing=sum(data_SHOES,data_LADIESWEAR,data_LADIES.SOCKS,data_JEWELRY.AND.SUNGLASSES,data_BRAS...SHAPEWEAR,
+                  na.rm = T))
+
+dataSum <- 
+dataSum %>% 
+  rowwise() %>% 
+  mutate(KidsClothing=sum(data_BOYS.WEAR,data_GIRLS.WEAR..4.6X..AND.7.14,data_INFANT.APPAREL,
+                  na.rm = T))
+
+dataSum <- 
+dataSum %>% 
+  rowwise() %>% 
+  mutate(Look=sum(data_PERSONAL.CARE,data_BEAUTY,
+                  na.rm = T))
+
+dataSum <- dplyr::select(dataSum, -c(data_CANDY..TOBACCO..COOKIES, data_FROZEN.FOODS,data_DAIRY,data_GROCERY.DRY.GOODS,data_MEAT...FRESH...FROZEN,
+                  data_SEAFOOD,data_BAKERY,data_COMM.BREAD,data_COOK.AND.DINE,data_OPTICAL...LENSES,data_MENS.WEAR,data_SHOES,data_LADIESWEAR,data_LADIES.SOCKS,data_JEWELRY.AND.SUNGLASSES,data_BRAS...SHAPEWEAR,data_BOYS.WEAR,data_GIRLS.WEAR..4.6X..AND.7.14,data_INFANT.APPAREL, data_PERSONAL.CARE,data_BEAUTY))
+```
+
+Kolejnym krokiem by³o pogrupowanie zmiennej `DepartmentDescription`. Storzy³em bardziej ogólne kategorie, takie jak:
+
+* `Food` - sk³adaj¹ca siê z ró¿nych rodzajów jedzenia
+* `Clothing` - zbieraj¹ca rózne rodzaje ubrania dla doros³ych
+* `KidsClothing` - analogicznej kolumny do poprzedniej tym razem dla dzieci
+
+A tak¿e kilka innych sk³adaj¹cych siê z b³ednie rozdzielonych kolumn jak `MENSWEAR` i `MENS.WEAR` lub grupuj¹c mniej liczne kategorie. 
+
+
+
+
+```{r eval=FALSE, message=FALSE, warning=FALSE, include=TRUE}
+
+fixed <- data %>% group_by(VisitNumber) %>% summarise(
+            DistinctDepart = n_distinct(DepartmentDescription),
+            DistinctProd = n_distinct(FinelineNumber),
+            SumProd = sum(ScanCount),
+            Spread = sd(ScanCount),
+            AnyRet = any(ScanCount < 0),
+            PurchasedProd = sum(ScanCount >= 0),
+            ReturnedProd = sum(ScanCount < 0),
+            TripType = first(TripType),
+            WeekDay = first(Weekday))
+
+# £¹czymy dwie ramki
+
+final <- left_join(fixed,dataSum,by="VisitNumber")
+final <- dplyr::select(final, -c("VisitNumber"))
+final$TripType <- factor(final$TripType)
+
+
+
+
+
+
+colnames(final) <- make.names(names(final),unique = F)
+
+```
+
+
+```{r}
+head(fixed)
+```
+
+Na koniec pogrupowa³em ca³¹ ramkê po unikalnych dla ka¿dych zakupów `VisitNumber` i doda³em kolejne zmienne:
+
+* `DistinctDepart` - iloœæ odwiedzonych "departamentów"
+
+* `DistinctProd` - iloœæ rodzajów kupionych produktóW
+
+* `SumProd` - iloœæ zarówno kupionych jak i zwróconych produktów
+
+* `Spread` - odchylenie standardowe dla iloœæi kupionych produktów (usuniêta przy testowaniu)
+
+* `AnyRet` - czy któryœ z produktów zosta³ zwrócony (usuniêta przy testowaniu)
+
+* `PurchasedProd` i `ReturnedProd` - odpowienio iloœæ kupionych i zwróconych produktów
+
+Nastêpnie obie utworzone ramki ³¹czymy ze sob¹.
+
+#Dodatkowe modyfikacje
+
+Niestety czêœæ modyfikacji, które chcia³em wprowadziæ okaza³y siê trudne do osi¹gniêcia ze wzglêdu na ograniczon¹ moc obliczeniow¹. Przydatne mog³o siê okazaæ rozszerzenie zmiennych `Upc` oraz `FinelineNumber` tak jak zrobiliœmy to ze zmienn¹ `DepartmentDescription`. Mog³o okazaæ siê to pomocne dla takiego algorytmu jak `xgboost`, który nie lubi skompresowanych danych, a lepiej móg³by sobie poradziæ na du¿ej iloœci zmiennych.
+
+#Ocena wprowadzonych zmian
+Surow¹ i obrobion¹ ramkê danych przetestujemy dokonuj¹c klasyfikacji za pomoc¹ algorytmu `RandomForest`. Wyniki porównamy u¿ywaj¹c funkcji do walidacji wyników podanej wraz z prac¹ domow¹. Surowa ramka mia³a zbyt wiele poziomów w kolumnie `DepartmentDescription` dla tego klasyfikatora, wiêc zosta³a ograniczona do 50 najwa¿niejszych.
+
+##Surowe dane
+```{r eval=FALSE, message=FALSE, warning=FALSE}
+final1<- na.omit(data_raw)
+final1$DepartmentDescription <- fct_lump(final1$DepartmentDescription, 50)
+train_setR <- final1[1:75750,]
+test_setR <- final1[75750:100000,]
+
+
+library(randomForest)
+rfR <- randomForest(TripType~., data=train_setR)
+scoresR <- predict(rfR, test_setR, type = "prob")
+
+myScoresR <- sapply(1:nrow(test_setR), function(i){
+  scoresR[i, test_setR$TripType[i]]
+})
+
+raw <- mean(-log(pmax(myScoresR,0.05)))
+
+```
+
+```{r}
+raw
+```
+
+##Obronione dane
+```{r eval=FALSE, message=FALSE, warning=FALSE}
+
+
+final<- na.omit(final)
+train_set <- final[1:60000,]
+test_set <- final[60000:75750,]
+
+
+
+
+
+library(randomForest)
+rf <- randomForest(TripType~., data=train_set)
+scores <- predict(rf, test_set, type = "prob")
+
+myScores <- sapply(1:nrow(test_set), function(i){
+  scores[i, test_set$TripType[i]]
+})
+
+trans <- mean(-log(pmax(myScores,0.05)))
+
+```
+```{r}
+trans
+```
+
+#Wnioski 
+Wprowadzone zmiany znacz¹co wp³ynê³y na wyniki klasyfikacji. Poprawa z wyjœciowego b³êdu na poziomie ~2 do ~0.9 jest zadowalaj¹co bior¹c pod uwagê to, ¿e w ¿aden sposób nie dostosowywaliœmy parametrów modeli, a tak¿e nie porównywaliœmy ró¿nych klasyfikatorów. A tak prezentujê siê istotnosc dodanych zmiennych na tle reszty. Widaæ, ¿e dodane zmienne s¹ bardzo istotne dla modelu, co prawdopodobnie dobrze sprzyja mniejszemym b³êdom.
+```{r warning=FALSE, message=FALSE, error=FALSE, cache=TRUE}
+library(randomForest)
+varImpPlot(rf)
+
+```
+
