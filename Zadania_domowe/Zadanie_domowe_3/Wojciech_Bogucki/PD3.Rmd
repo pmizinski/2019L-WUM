@@ -1,0 +1,95 @@
+---
+title: "PD3"
+author: "Wojciech Bogucki"
+date: "1 kwietnia 2019"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(data.table)
+library(dplyr)
+library(mlr)
+```
+
+# Wstęp
+Pracę domową wykonałem na zbiorze "train.csv" z [konkursu na kaggle'u](https://www.kaggle.com/c/walmart-recruiting-trip-type-classification).
+
+```{r wczytanie, cache=TRUE}
+data_train <- fread("train.csv", data.table = FALSE, stringsAsFactors = TRUE)
+data_train <- data_train %>% na.omit
+```
+
+Na początku usunąłem z ramki danych wiersze zawierające NA.
+
+# Tworzenie nowych zmiennych
+```{r nowa ramka, cache=TRUE}
+data_train_new <- data_train %>% 
+  group_by(VisitNumber) %>% 
+  mutate(weekend=ifelse(Weekday %in% c("Saturday","Sunday"),1L,0L),    
+         returned=ifelse(ScanCount<0,1L,0L),                           
+         count=n())                                                    
+```
+
+Nowa ramka danych zawiera 3 nowe kolumny:
+
+* weekend - 1 jeśli zakupy odbyły sie w weekend, 0 - w przeciwnym wypadku
+* returned - 1 jeśli produkt został zwrócony(ScanCount był ujemny), 0 - w przeciwnych wypadku
+* count - liczba różnych produktów kupionych lub zwróconych podczas danych zakupów
+
+```{r podzial, include=FALSE, cache=TRUE}
+n <- nrow(data_train)
+samp_tr <- sample(1:n,floor(0.6*n))
+data_tr <- data_train[samp_tr,]
+data_ts <- setdiff(data_train, data_tr)
+data_tr_new <- data_train_new[samp_tr,]
+data_ts_new <- setdiff(data_train_new, data_tr_new)
+```
+# Porównanie jakości predykcji
+
+Zbiór oryginalny oraz zbiór zmodyfikowany podzieliłem następnie na zbiory treningowe(60%) i testowe(40%).
+Do predykcji użyłem klasyfikatora ranger.
+
+```{r predykcja, cache=TRUE}
+set.seed(1234,"L'Ecuyer")
+
+task1 <- makeClassifTask(id = "task1",data = data_tr, target="TripType")
+task2 <- makeClassifTask(id = "task2",data = data_tr_new, target="TripType")
+learner <- makeLearner("classif.ranger", predict.type = "prob", par.vals = list(num.trees=50))
+
+train <- train(learner = learner,task = task1)
+train2 <- train(learner = learner,task = task2)
+
+pred <- predict(train,newdata=data_ts)
+pred2 <- predict(train2,newdata=data_ts_new)
+conf_matrix <- table(pred$data$response, data_ts$TripType)
+conf_matrix2 <- table(pred2$data$response, data_ts_new$TripType)
+```
+
+Następnie porównałem otrzymane wyniki.
+
+*Accuracy*
+```{r acc}
+#oryginalny
+sum(diag(conf_matrix))/sum(conf_matrix)
+#nowy
+sum(diag(conf_matrix2))/sum(conf_matrix2)
+```
+
+*Logloss*
+```{r logloss}
+
+probs1 <- as.matrix(select(pred$data,-truth, -response))
+colnames(probs1) <- levels(pred$data$truth)
+#oryginalny
+measureLogloss(probs1,pred$data$truth)
+
+probs2 <- as.matrix(select(pred2$data,-truth, -response))
+colnames(probs2) <- levels(pred2$data$truth)
+# nowy
+measureLogloss(probs2,pred2$data$truth)
+
+```
+
+# Podsumowanie
+Dodanie nowych kolumn poprawiło wyniki predykcji. Pokazuje to zarówno wzrost dokładności jak i spadek wartości logarytmicznej funkcji straty.

@@ -23,7 +23,7 @@ Plan laboratoriów:
 Kryteria oceniania: 
 
 - 10 pkt - zaliczenie 3 kursów w Data Camp.
-- 30 pkt - ćwiczenia z laboratoriów (13 prac domowych za 2 punkty + 4 punkty za aktywność).
+- 30 pkt - ćwiczenia z laboratoriów (7 prac domowych za 4 punkty + 2 punkty bonusowe).
 - 20 pkt - projekt 1 (klasyfikacja):
   - 5 pkt - EDA (faza 1),
   - 10 pkt - inżynieria cech, wstępne modelowanie (faza 2),
