@@ -12,7 +12,7 @@ setwd("~/Desktop/zadanie3WUM/kaggle")
 train <- read_csv("train.csv")
 #train<-sample_frac(train,0.02)
 wizyty<-unique(train$VisitNumber)
-wizyty<-sample(wizyty,size = floor(length(wizyty)/55),replace = FALSE)
+wizyty<-sample(wizyty,size = floor(length(wizyty)/100),replace = FALSE)
 train<-train[train$VisitNumber %in% wizyty,]
 train<-filter(train,!is.na(FinelineNumber)) %>% select(-Upc)
 train[sapply(train, is.character)] <- lapply(train[sapply(train, is.character)],as.factor) 
@@ -26,7 +26,7 @@ model<-"classif.gbm"
 
 task = makeClassifTask(id = "task", data = train,"TripType" )
 learner<-makeLearner(model)
-
+model_gbm<-mlr::train(learner,task)
 cv <- makeResampleDesc("CV", iters = 5)
 r1 <- resample(learner, task, cv,measures = acc)
 
@@ -37,6 +37,4 @@ train %>% group_by(VisitNumber) %>% summarise(numberofreturns=sum(ScanCount<0),
 
 train<-inner_join(train,xd,by="VisitNumber")
 task = makeClassifTask(id = "task", data = train,"TripType" )
-r2 <- resample(learner, task, cv,measures = acc)
-
-
+r2 <- resample(learner, task, cv,measures = mcls)
