@@ -1,0 +1,173 @@
+---
+title: "PD4"
+author: "Mateusz Bąkała"
+date: "11 kwietnia 2019"
+output: html_document
+---
+
+```{r pixels, include=FALSE, cache=TRUE}
+image_seg <- read.csv("https://raw.githubusercontent.com/mini-pw/2019L-WarsztatyBadawcze_zbiory/master/toronto_image-seg/image-seg.csv")
+```
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library("DALEX")
+library("e1071")
+library("ggplot2")
+library("MLmetrics")
+library("rBayesianOptimization")
+library("randomForest")
+indices <- sample(1:2310, 550)
+image_seg_test <- image_seg[indices, ]
+image_seg <- image_seg[-indices, ]
+source("additional_functions.R")
+regr_rmse <- data.frame(model = character(0), rmse = numeric(0), stringsAsFactors = FALSE)
+classif_acc <- data.frame(model = character(0), acc = numeric(0), stringsAsFactors = FALSE)
+```
+
+## Wstęp
+
+Celem tego dokumentu jest przedstawienie procesu poznawania algorytmu Support Vector Machine z pomocą biblioteki DALEX. Wykorzystane zbiory danych to `apartments` zawarty w DALEX jako przykładowy zbiór oraz `image-seg` ze strony cs.toronto.edu, skonwertowany przeze mnie do postaci csv i umieszczony na Githubie w celu udostępnienia go szerszej publiczności.
+
+## Dopasowanie SVM
+
+Przystąpmy tedy bez zbędnych ceregieli do dzieła. Wybrane zbiory danych reprezentują dwie główne klasy problemów: regresję oraz klasyfikację. W przypadku `apartments` przewidywać będziemy cenę metra kwadratowego (`m2.price`), natomiast w zbiorze `image-seg` naszym celem jest kolumna `pixel.class`, zawierająca nazwę jednego z siedmiu materiałów. Na szczęście SVM potrafi poradzić sobie z obydwoma sytuacjami.
+
+```{r fit}
+regr_model <- svm(formula(m2.price ~ .), apartments)
+regr_pred <- predict(regr_model, apartmentsTest)
+(regr_rmse[1,] <- list("svm", RMSE(regr_pred, apartmentsTest$m2.price)))
+
+classif_model <- svm(formula(pixel.class ~ .), image_seg)
+classif_pred <- predict(classif_model, image_seg_test)
+(classif_acc[1,] <- list("svm", Accuracy(classif_pred, image_seg_test$pixel.class)))
+```
+
+Przy użyciu dwóch prostych linii kodu uzyskaliśmy dwa modele, póki co bez spersonalizowanych parametrów. Otrzymaliśmy miary jakości predykcji wyrażone przez odpowiednio Root Mean Square Error i Accuracy, które posłużą nam przy porównywaniu pomiędzy sobą modeli.
+
+## Skalowanie danych
+
+SVM domyślnie skaluje przekazywane mu dane. Sprawdźmy więc, co stanie się, jeśli wyłączymy skalowanie.
+
+```{r fit_wo_scale}
+regr_model_unscaled <- svm(formula(m2.price ~ .), apartments, scale = FALSE)
+regr_pred_unscaled <- predict(regr_model_unscaled, apartmentsTest)
+RMSE(regr_pred_unscaled, apartmentsTest$m2.price)
+
+classif_model_unscaled <- svm(formula(pixel.class ~ .), image_seg, scale = FALSE)
+classif_pred_unscaled <- predict(classif_model_unscaled, image_seg_test)
+Accuracy(classif_pred_unscaled, image_seg_test$pixel.class)
+```
+
+Otrzymana różnica jest, szczerze mówiąc, szokująca. W przypadku obydwu modeli jakość predykcji spadła dramatycznie. Ponieważ zależy nam na jak najlepszych predykcjach, w dalszych rozważaniach nie będziemy ustawiać parametru `scale = FALSE`.
+
+## Optymalizacja hiperparametrów
+
+Przejdźmy do clou naszego programu, czyli optymalizacji hiperparametrów. Przetestujmy najpierw regresję na zbiorze `apartments` przy użyciu jądra gaussowskiego. Do pomocy w losowym przeszukiwaniu parametrów wykorzystamy bibliotekę `rBayesianOptimization`, która robi dokładnie to, co sugeruje nazwa.
+
+Ponieważ `BayesianOptimization` próbuje maksymalizować wynik, najprostszym sposobem optymalizacji metryki RMSE jest maksymalizacja po przemnożeniu jej przez -1, co też uczynimy.
+
+Zauważmy jeszcze, że rozkład parametrów `gamma` oraz `cost` przypomina logarytmiczny, w związku z tym optymalizowana funkcja została zmodyfikowana, aby przyjmować `log(x)`, gdzie `x` to optymalizowany przez nas parametr.
+
+```{r hiperpars_1, echo=FALSE}
+regr_bayes <- BayesianOptimization(regr_function,
+                                   bounds = list(gamma = c(-12, 2),
+                                                 cost = c(-3, 13)),
+                                   init_points = 10,
+                                   n_iter = 20)
+regr_bayes$Best_Par <- exp(regr_bayes$Best_Par)
+```
+
+```{r hiperpars_2, echo=FALSE}
+classif_bayes <- BayesianOptimization(classif_function,
+                                      bounds = list(gamma = c(-12, 2),
+                                                    cost = c(-3, 13)),
+                                      init_points = 10,
+                                      n_iter = 20)
+classif_bayes$Best_Par <- exp(classif_bayes$Best_Par)
+```
+
+Chociaż otrzymaliśmy już wyniki, skonstruujmy jednak jeszcze modele oparte na wypracowanych parametrach. Przydadzą się one podczas generowania wykresów w bibliotece DALEX.
+
+```{r fit_tuned}
+regr_model_tuned <- svm(formula(m2.price ~ .), apartments,
+                  gamma = regr_bayes$Best_Par["gamma"],
+                  cost = regr_bayes$Best_Par["cost"])
+regr_pred_tuned <- predict(regr_model_tuned, apartmentsTest)
+(regr_rmse[2,] <- list("svm_tuned", RMSE(regr_pred_tuned, apartmentsTest$m2.price)))
+
+classif_model_tuned <- svm(formula(pixel.class ~ .), image_seg,
+                           gamma = classif_bayes$Best_Par["gamma"],
+                           cost = classif_bayes$Best_Par["cost"])
+classif_pred_tuned <- predict(classif_model_tuned, image_seg_test)
+(classif_acc[2,] <- list("svm_tuned", Accuracy(classif_pred_tuned, image_seg_test$pixel.class)))
+```
+
+## Porównanie wyników
+
+Skoro przeszliśmy już najtrudniejszy moment dopasowania parametrów i poprawiliśmy skuteczność predykcji, czas obejrzeć kilka wizualizacji zawierających SVM przed i po tuningu oraz tradycyjny randomForest dla porównania (ponieważ kilka innych implementacji lasów losowych zwracało modele w postaci niekompatybilnej z DALEX-em).
+
+```{r comparison, include=FALSE}
+regr_model_rf <- randomForest(formula(m2.price ~ .), apartments)
+regr_pred_rf <- predict(regr_model_rf, apartmentsTest)
+regr_rmse[3,] <- list("rf", RMSE(regr_pred_rf, apartmentsTest$m2.price))
+
+regr_explainer <- explain(regr_model, y = apartments$m2.price)
+regr_explainer_tuned <- explain(regr_model_tuned, y = apartments$m2.price)
+regr_explainer_rf <- explain(regr_model_rf, y = apartments$m2.price)
+
+classif_model_rf <- randomForest(formula(pixel.class ~ .), image_seg)
+classif_pred_rf <- predict(classif_model_rf, image_seg_test)
+classif_acc[3,] <- list("rf", Accuracy(classif_pred_rf, image_seg_test$pixel.class))
+
+classif_explainer <- explain(classif_model, y = image_seg$pixel.class)
+classif_explainer_tuned <- explain(classif_model_tuned, y = image_seg$pixel.class)
+classif_explainer_rf <- explain(classif_model_rf, y = image_seg$pixel.class)
+```
+
+```{r comparison_pdp, echo=FALSE}
+regr_pdp <- variable_response(regr_explainer, variable = "construction.year", type = "pdp")
+regr_pdp_tuned <- variable_response(regr_explainer_tuned, variable = "construction.year", type = "pdp")
+regr_pdp_tuned$label <- "svm_tuned"
+regr_pdp_rf <- variable_response(regr_explainer_rf, variable = "construction.year", type = "pdp")
+plot(regr_pdp, regr_pdp_tuned, regr_pdp_rf)
+```
+
+```{r comparison_ale, echo=FALSE}
+regr_ale <- variable_response(regr_explainer, variable = "surface", type = "ale")
+regr_ale_tuned <- variable_response(regr_explainer_tuned, variable = "surface", type = "ale")
+regr_ale_tuned$label <- "svm_tuned"
+regr_ale_rf <- variable_response(regr_explainer_rf, variable = "surface", type = "ale")
+plot(regr_ale, regr_ale_tuned, regr_ale_rf)
+```
+
+```{r comparison_pdp_2, echo=FALSE}
+classif_pdp <- variable_response(classif_explainer, variable = "h", type = "pdp")
+classif_pdp_tuned <- variable_response(classif_explainer_tuned, variable = "h", type = "pdp")
+classif_pdp_tuned$label <- "svm_tuned"
+classif_pdp_rf <- variable_response(classif_explainer_rf, variable = "h", type = "pdp")
+plot(classif_pdp, classif_pdp_tuned, classif_pdp_rf)
+```
+
+```{r comparison_ale_2, echo=FALSE}
+classif_ale <- variable_response(classif_explainer, variable = "val", type = "ale")
+classif_ale_tuned <- variable_response(classif_explainer_tuned, variable = "val", type = "ale")
+classif_ale_tuned$label <- "svm_tuned"
+classif_ale_rf <- variable_response(classif_explainer_rf, variable = "val", type = "ale")
+plot(classif_ale, classif_ale_tuned, classif_ale_rf)
+```
+
+Zwizualizujmy też metryki RMSE i Accuracy przy użyciu `ggplot2` dla rozważanych modeli.
+
+```{r plot, echo=FALSE}
+ggplot(regr_rmse, aes(x = model, y = rmse)) +
+  geom_bar(stat = "identity", fill = "#E69F00") +
+  theme_minimal()
+```
+
+```{r plot_2, echo=FALSE}
+ggplot(classif_acc, aes(x = model, y = acc)) +
+  geom_bar(stat = "identity", fill = "#E69F00") +
+  theme_minimal()
+```
+
