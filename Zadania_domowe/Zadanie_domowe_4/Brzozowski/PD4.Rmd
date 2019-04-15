@@ -1,0 +1,285 @@
+---
+title: "SVM"
+author: "Łukasz Brzozowski"
+date: "15-04-2019"
+output:
+  html_document:
+    df_print: paged
+    toc: true
+    toc_float: true
+    code_folding: hide
+    number_sections: true
+---
+```{r setup, include=FALSE, warning=FALSE}
+set.seed(1)
+knitr::opts_chunk$set(ceho = FALSE)
+library(dplyr)
+library(mlr)
+library(OpenML)
+library(DALEX)
+```
+
+# Zbiory danych
+
+Model będę przygotowywał na zbiorach `apartaments` oraz zbiorze `kc2` z bazy OpenML.
+
+## `apartaments`
+```{r}
+dat1train <- apartments
+dat1test <- apartments_test
+head(dat1train, 3)
+```
+
+## `kc2`
+```{r, message=FALSE, cache = TRUE}
+dat2 <- getOMLDataSet(data.name = "kc2")$data
+index <- sample(nrow(dat2), floor((4/5)*nrow(dat2)))
+dat2train <- dat2[index,]
+dat2test <- dat2[-index,]
+head(dat2train, 3)
+```
+
+W przypadku zbioru `apartaments` zrobimy model regresyjny przewidujący zmienną `m2.price`, a&nbsp;w&nbsp;przypadku zbioru `kc2` przygotujemy model klasyfikacyjny przewidujący zmienną `problems`. Pierwszy model nauczymy na danych `apartaments` i wykorzystamy zbiór testowy `apartaments_test`, a w `kc2` wybierzemy zbiór testowy o liczności 20% całego zbioru.
+
+# Pierwsze modele
+
+Na początku dopasujmy domyślne modele SVM z pakietu `mlr` do obu zbiorów. Nie pozwalamy modelom na domyślne skalowanie, aby porównać wyniki z modelami wytrenowanymi na przeskalowanych danych.
+
+```{r}
+classifTask <- makeClassifTask(id = "kc2", data = dat2train, target = "problems")
+classifLrn <- makeLearner("classif.svm", predict.type = "prob", par.vals = list(scale = FALSE))
+
+regrTask <- makeRegrTask(id = "ap", data = dat1train, target = "m2.price")
+regrLrn <- makeLearner("regr.svm", predict.type = "response", par.vals = list(scale = FALSE))
+```
+
+## `apartaments`
+```{r}
+trained1 <- train(regrLrn, regrTask)
+r1 <- predict(trained1, newdata = dat1test)
+k1 <- performance(r1, measures = list(rmse, mae))
+k1
+```
+
+Jak widać powyżej, błąd bezwzględny wynosi ok. 710 jednostek, czyli w przybliżeniu 20% średniej ceny mieszkania. 
+
+## `kc2`
+```{r}
+trained2 <- train(classifLrn, classifTask)
+r2 <- predict(trained2, newdata = dat2test)
+k2 <- performance(r2, measures = list(acc, auc))
+k2
+```
+
+Otrzymujemy średnio dobre wyniki, które prawdopodobnie da się znacznie poprawić.
+
+# Modele po przeskalowaniu danych
+
+Pozwólmy teraz modelowi SVM na domyślne skalowanie danych.
+
+```{r}
+classifLrn1 <- makeLearner("classif.svm", predict.type = "prob", par.vals = list(scale = TRUE))
+regrLrn1 <- makeLearner("regr.svm", predict.type = "response", par.vals = list(scale = TRUE))
+```
+
+## `apartaments`
+```{r}
+trained1_1 <- train(regrLrn1, regrTask)
+r1_1 <- predict(trained1_1, newdata = dat1test)
+k1_1 <- performance(r1_1, measures = list(rmse, mae))
+k1_1
+```
+
+## `kc2`
+```{r}
+trained2_1 <- train(classifLrn1, classifTask)
+r2_1 <- predict(trained2_1, newdata = dat2test)
+k2_1 <- performance(r2_1, measures = list(acc, auc))
+k2_1
+```
+
+Obserwujemy znaczne zmniejszenie błędów średiokwadratowego oraz bezwględnego w przypadku klasyfikacji. W przypadku regresji także nastąpiła poprawa, szczególnie jeśli chodzi o miarę `AUC`. Możemy zatem stwierdzić, że normalizacja jest istotnie bardzo ważna, jeśli chodzi o przygotowanie modelu.
+
+# Optymalizacja hiperparametrów
+
+Dla obu modeli poszukamy najlepszych parametrów - wykorzystamy do tego celu przeszukiwanie losowe oraz optymalizację bayesowską. Według artykułu najważniejsze do optymalizacji są wartości `C`, która odpowiada wysokości kary za błędy, oraz `gamma` ozznaczająca "stopień skomplikowania" jądra.
+
+## Przeszukiwanie losowe
+
+Na obu zbiorach wykonamy 300 iteracji w poszukiwanu najlepszych parametrów. 
+
+### `apartaments`
+```{r, cache = TRUE}
+cv <- makeResampleDesc("CV", iters = 3L)
+params <- makeParamSet(
+  makeNumericParam("cost", lower = -15, upper = 15, trafo = function(x) 2^x),
+  makeNumericParam("gamma", lower = -5, upper = 10, trafo = function(x) 2^x)
+)
+ctrl <- makeTuneControlRandom(maxit = 200)
+
+tuned <- tuneParams(regrLrn1, regrTask, measures = list(rmse),
+                    show.info = FALSE,
+                    resampling = cv,
+                    par.set = params,
+                    control = ctrl)
+
+regrLrn2 <- setHyperPars(regrLrn1, par.vals = tuned$x)
+trained1_2 <- train(regrLrn2, regrTask)
+r1_2 <- predict(trained1_2, newdata = dat1test)
+k1_2 <- performance(r1_2, measures = list(rmse, mae))
+k1_2
+
+```
+
+Możemy zaobserwować poprawę w stosunku do poprzedniego wyniku.
+
+### `kc2`
+```{r, cache = TRUE}
+tuned <- tuneParams(classifLrn1, classifTask, measures = list(auc),
+                    show.info = FALSE,
+                    resampling = cv,
+                    par.set = params,
+                    control = ctrl)
+
+classifLrn2 <- setHyperPars(classifLrn1, par.vals = tuned$x)
+trained2_2 <- train(classifLrn2, classifTask)
+r2_2 <- predict(trained2_2, newdata = dat2test)
+k2_2 <- performance(r2_2, measures = list(acc, auc))
+k2_2
+```
+
+W przypadku modelu klasyfikacyjnego nie osiągnęliśmy poprawy, wręcz skuteczność klasyfikacji zmniejszyła się o jeden punkt procentowy. Może jednak wpływać na to niewystarczająca liczba iteracji lub złe ziarno losowości.
+
+## Optymalizacja bayesowska
+
+Wykorzystamy teraz optymalizację bayesowską do znalezienia optymalnych hiperparametrów. Będziemy poszukiwać optymalnych wartości w tych samych przedziałach, co poprzednio.
+
+### `apartaments`
+```{r, cache = TRUE, message=FALSE, warning=FALSE}
+library(mlrMBO)
+configureMlr(on.learner.warning = "quiet", show.learner.output = FALSE)
+ctrl <- makeMBOControl()
+ctrl <- setMBOControlTermination(ctrl, iters = 5L)
+tune.ctrl <- makeTuneControlMBO(mbo.control = ctrl, budget = 30)
+res <- tuneParams(regrLrn1, regrTask, cv, par.set = params, control = tune.ctrl, show.info = FALSE, measures = list(rmse))
+print(res)
+```
+
+Wyniki na zbiorze testowym:
+
+```{r}
+regrLrn3 <- setHyperPars(regrLrn1, par.vals = res$x)
+trained1_3 <- train(regrLrn3, regrTask)
+r1_3 <- predict(trained1_3, newdata = dat1test)
+k1_3 <- performance(r1_3, measures = list(rmse, mae))
+k1_3
+```
+
+### `kc2`
+```{r, cache = TRUE, message=FALSE, warning=FALSE}
+set.seed(1)
+res <- tuneParams(classifLrn1, classifTask, cv, par.set = params, control = tune.ctrl, show.info = FALSE, measures = list(auc))
+print(res)
+```
+
+```{r}
+classifLrn3 <- setHyperPars(classifLrn1, par.vals = res$x)
+trained2_3 <- train(classifLrn3, classifTask)
+r2_3 <- predict(trained2_3, newdata = dat2test)
+k2_3 <- performance(r2_3, measures = list(acc, auc))
+k2_3
+```
+Jak widzimy, dzięki optymalizacji bayesowskiej osiągnęliśmy lepsze wyniki niż w przypadku losowego przeszukiwania w modelu regresyjnym. Dla modelu klasyfikacyjnego osiągnięty wynik jest również nieznacznie lepszy od losowego przeszukiwania, na podobnym poziomie, co osiągnięty dzięki domyślnym ustawieniom.
+
+# PDP
+
+Możemy teraz przyjrzeć się wykresom PDP zbudowanych modeli. Przygotujmy model drzewiasty z pakietu `classif.ranger`.
+```{r, cache = TRUE}
+regrTaskRF <- makeRegrTask(data = dat1train, target = "m2.price")
+regrLrnRF <- makeLearner("regr.ranger", predict.type = "response")
+trainedRegrRF <- train(regrLrnRF, regrTaskRF)
+
+classifTaskRF <- makeClassifTask(data = dat2train, target = "problems")
+classifLrnRF <- makeLearner("classif.ranger", predict.type = "prob")
+trainedClassifRF <- train(classifLrnRF, classifTaskRF)
+```
+
+## `apartaments`
+```{r, cache = TRUE}
+custom_predict <- function(object, newdata) {pred <- predict(object, newdata=newdata)
+                                              response <- pred$data$response
+                                              return(response)}
+custom_predict_classif <- function(object, newdata) {pred <- predict(object, newdata=newdata)
+                                              response <- pred$data[,3]
+                                              return(response)}
+explainer_r1 <- explain(trained1, data = dat1test, predict_function = custom_predict, label = "svmNoScaling")
+explainer_r1_1 <- explain(trained1_1, data = dat1test, predict_function = custom_predict, label = "svmScaled")
+explainer_r1_2 <- explain(trained1_2, data = dat1test, predict_function = custom_predict, label = "svmRandom")
+explainer_r1_3 <- explain(trained1_3, data = dat1test, predict_function = custom_predict, label = "svmBayes")
+explainer_regr_rf <- explain(trainedRegrRF, data = dat1test, predict_function = custom_predict, label = "ranger")
+
+sv_r1_cy <- variable_response(explainer_r1, variable = "construction.year", type = "pdp")
+sv_r1_1_cy <- variable_response(explainer_r1_1, variable = "construction.year", type = "pdp")
+sv_r1_2_cy <- variable_response(explainer_r1_2, variable = "construction.year", type = "pdp")
+sv_r1_3_cy <- variable_response(explainer_r1_3, variable = "construction.year", type = "pdp")
+sv_regr_rf_cy <- variable_response(explainer_regr_rf, variable = "construction.year", type = "pdp")
+
+p1 <- plot(sv_r1_cy, sv_r1_1_cy, sv_r1_2_cy, sv_r1_3_cy, sv_regr_rf_cy)
+
+sv_r1_s <- variable_response(explainer_r1, variable = "surface", type = "pdp")
+sv_r1_1_s <- variable_response(explainer_r1_1, variable = "surface", type = "pdp")
+sv_r1_2_s <- variable_response(explainer_r1_2, variable = "surface", type = "pdp")
+sv_r1_3_s <- variable_response(explainer_r1_3, variable = "surface", type = "pdp")
+sv_regr_rf_s <- variable_response(explainer_regr_rf, variable = "surface", type = "pdp")
+
+p2 <- plot(sv_r1_s, sv_r1_1_s, sv_r1_2_s, sv_r1_3_s, sv_regr_rf_s)
+
+sv_r1_n <- variable_response(explainer_r1, variable = "no.rooms", type = "pdp")
+sv_r1_1_n <- variable_response(explainer_r1_1, variable = "no.rooms", type = "pdp")
+sv_r1_2_n <- variable_response(explainer_r1_2, variable = "no.rooms", type = "pdp")
+sv_r1_3_n <- variable_response(explainer_r1_3, variable = "no.rooms", type = "pdp")
+sv_regr_rf_n <- variable_response(explainer_regr_rf, variable = "no.rooms", type = "pdp")
+
+p3 <- plot(sv_r1_n, sv_r1_1_n, sv_r1_2_n, sv_r1_3_n, sv_regr_rf_n)
+
+sv_r1_f <- variable_response(explainer_r1, variable = "floor", type = "pdp")
+sv_r1_1_f <- variable_response(explainer_r1_1, variable = "floor", type = "pdp")
+sv_r1_2_f <- variable_response(explainer_r1_2, variable = "floor", type = "pdp")
+sv_r1_3_f <- variable_response(explainer_r1_3, variable = "floor", type = "pdp")
+sv_regr_rf_f <- variable_response(explainer_regr_rf, variable = "floor", type = "pdp")
+
+p4 <- plot(sv_r1_f, sv_r1_1_f, sv_r1_2_f, sv_r1_3_f, sv_regr_rf_f)
+
+library(patchwork)
+(p1 / p2)
+(p3 / p4)
+```
+
+## `k2`
+
+```{r, cache = TRUE, warning=FALSE}
+explainer_r2 <- explain(trained2, data = dat2test, predict_function = custom_predict_classif, label = "svmNoScaling")
+explainer_r2_1 <- explain(trained2_1, data = dat2test, predict_function = custom_predict_classif, label = "svmScaled")
+explainer_r2_2 <- explain(trained2_2, data = dat2test, predict_function = custom_predict_classif, label = "svmRandom")
+explainer_r2_3 <- explain(trained2_3, data = dat2test, predict_function = custom_predict_classif, label = "svmBayes")
+explainer_class_rf <- explain(trainedClassifRF, data = dat2test, predict_function = custom_predict, label = "ranger")
+
+sv_r2_l <- variable_response(explainer_r2, variable = "loc", type = "pdp")
+sv_r2_1_l <- variable_response(explainer_r2_1, variable = "loc", type = "pdp")
+sv_r2_2_l <- variable_response(explainer_r2_2, variable = "loc", type = "pdp")
+sv_r2_3_l <- variable_response(explainer_r2_3, variable = "loc", type = "pdp")
+sv_class_rf_l <- variable_response(explainer_class_rf, variable = "loc", type = "pdp")
+
+p1_1 <- plot(sv_r2_l, sv_r2_1_l, sv_r2_2_l, sv_r2_3_l, sv_class_rf_l)
+
+sv_r2_v <- variable_response(explainer_r2, variable = "v.g.", type = "pdp")
+sv_r2_1_v <- variable_response(explainer_r2_1, variable = "v.g.", type = "pdp")
+sv_r2_2_v <- variable_response(explainer_r2_2, variable = "v.g.", type = "pdp")
+sv_r2_3_v <- variable_response(explainer_r2_3, variable = "v.g.", type = "pdp")
+sv_class_rf_v <- variable_response(explainer_class_rf, variable = "v.g.", type = "pdp")
+
+p1_2 <- plot(sv_r2_v, sv_r2_1_v, sv_r2_2_v, sv_r2_3_v, sv_class_rf_v)
+
+p1_1 / p1_2
+```
+
