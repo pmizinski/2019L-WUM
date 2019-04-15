@@ -1,0 +1,151 @@
+---
+title: "WUM Projekt nr 1"
+author: "Bartłomiej Granat, Piotr Miziński"
+date: "`r format(Sys.time(), '%d - %m - %Y')`"
+output:
+  html_document:
+    dane_print: paged
+    toc: true
+    toc_float: true
+    code_folding: hide
+    number_sections: true
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, cache = TRUE)
+
+source("plik1.R")
+```
+
+# Wstęp
+
+Na samym początku przyjrzeliśmy się słownikowi zmiennych, aby wybrać te, które wykorzystamy do predykcji.
+
+| Variable| Description|
+|--------------------------|----------------------------------------------------------------------------------------------------------------|
+| id                      | unque identifier for each individual|
+| name                    | first and last name|
+| first                   | first name|
+| last                    | last name|
+| compas_screening_dat    | date on which decile_score was given|
+| sex                     | sex (male or female)|
+| dob                     | date of birth|
+| age                     | age in years|
+| age_cat                 | age category (less than 25, 25-45, greater than 45)|
+| race                    | race (African-American, Asian, Caucasian, Hispanic, Native American, Other)|
+| juv_fel_count           | juvenile felony count|
+| decile_score            | COMPAS Risk of Recidivism score from 1 to 10|
+| juv_misd_count          | juvenile misdemeanor count|
+| juv_other_count         | juvenile other offenses count|
+| priors_count            | prior offenses count|
+| days_b_screening_arrest | number of days between COMPAS screening and arrest|
+| c_jail_in               | jail entry date for original crime|
+| c_jail_out              | jail exit date for original crime|
+| c_case_number           | case number for original crime|
+| c_offense_date          | offense date of original crime|
+| c_arrest_date           | arrest date for original crime|
+| c_days_from_compas      | days between COMPAS screening and original crime offense date|
+| c_charge_degree         | charge degree of original crime|
+| c_charge_desc           | description of charge for original crime|
+| is_recid                | binary indicator of recidivation (1=individual recidivated, 0=individual did not recidivate)|
+| r_case_number           | case number of follow-up crime|
+| r_charge_degree         | charge degree of follow-up crime|
+| r_days_from_arrest      | number of days between follow-up crime and arrest date|
+| r_offense_date          | date of follow-up crime|
+| r_charge_desc           | description of charge for follow-up crime|
+| r_jail_in               | jail entry date for follow-up crime|
+| r_jail_out              | jail exit date for follow-up crime|
+| violent_recid           | values are all `NA`. This column is ignored.|
+| is_voilent_recid        | binary indicator of violent follow-up crime (1=follow-up crime was violent, 0=follow-up crime was non-violent) |
+| vr_case_number          | case number for violent follow-up crime|
+| vr_charge_degree        | charge degree for violent follow-up crime|
+| vr_offense_date         | date of offense for violent follow-up crime|
+| vr_charge_desc          | description of charge for violent follow-up crime|
+| type_of_assessment      | the type of COMPAS score given for decile_score (here all values are Risk of Recidivism)|
+| decile_score.1          | repeat column of decile_score|
+| score_text              | ProPublica-defined category of decile_score (High=8-10, Medium=5-7, Low=1-4)|
+| screening_date          | repeat column of compas_screening_date|
+| v_type_of_assessment    | the type of COMPAS score given for v_decile_score (here all values are Risk_of_Violence)|
+| v_decile_score          | COMPAS Risk of Violence score from 1 to 10|
+| v_score_text            | ProPublica-defined category of v_decile_score (High=8-10, Medium=5-7, Low=1-4)|
+| v_screening_date        | date on which v_decile_score was given|
+| in_custody              | date on which individual was brought into custody|
+| out_custody             | date on which individual was released from custody|
+| priors_count.1          | repeat column of priors_count|
+| two_year_recid          | binary indicator of recidivation within two years of scoring (1=individual recidivated, 0=individual did not recidivate)|
+| start                   | unclear definition but not used in our analysis|
+| end                     | unclear definition but not used in our analysis|
+| event                   | unclear definition but not used in our analysis|
+
+
+Wszystkie kolumny związane z badaniem Compass nas nie interesują, ponieważ zawierają dane o tym co zamierzamy przewidywać. Po usunięciu tych zmiennych zrobiliśmy pierwszą wizualizację danych.
+
+
+```{r}
+introduce(df1)
+plot_intro(df1)
+plot_missing(df1)
+```
+
+Widać, że nie ma w ramce danych żadnego kompletnego wiersza oraz że zmienna arrest_date ma ponad 80% brakujących wartości przez co także usuwamy ją ze zbioru. 
+
+Dodaliśmy również kolumnę jail_long mówiącą o długości wyroki oraz grLong dzielącą obserwacje na 7 grup ze względu na długość odsiadki. 
+
+Po tych operacjach podzieliliśmy zbiór na treningowy i testowy, a natępnie przyjrzeliśmy się zbiorowi treningowemu.
+
+```{r}
+introduce(df2)
+plot_intro(df2)
+```
+
+# Wizualizacja zmiennych
+
+W celu wstępnej eksploracji zmiennych, które mogłyby być silnie skorelowane ze zmienną celu podzieliliśmy zbiór ze względu na zmienną is_recid i narysowaliśmy wykresy
+
+## Rasa
+
+Kolor czerwony oznacza recydywistów
+
+```{r}
+p1_1
+p1_2
+```
+
+## Długość odsiadki
+
+```{r}
+p2_1
+p2_2
+```
+
+## Grupa wiekowa
+
+```{r}
+p3_1
+p3_2
+```
+
+## Stopień przestępstwa
+
+```{r echo = TRUE}
+#- Murder
+#- Felony (1st degree) (F1) -> przestepstwo
+#- Felony (2nd degree) (F2)
+#- Felony (3rd degree) (F3)
+#- Ungraded Felony (F3)
+#- Misdemeanor (1st degree)(M1) -> wykroczenie
+#- Misdemeanor (2nd degree)(M2)
+#- Misdemeanor (3rd degree)(M3)
+#- Ungraded Misdemeanor (Same as M3)
+#- Summary Offenses
+p4_1
+p4_2
+```
+
+# Korelacja zmiennych
+
+Stworzyliśmy wykres korelacji poszczególnych zmiennych i kategorii. Najbardziej interesuje nas 
+
+```{r fig1, fig.height = 7}
+p5
+```
