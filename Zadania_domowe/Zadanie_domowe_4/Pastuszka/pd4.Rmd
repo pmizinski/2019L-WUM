@@ -1,0 +1,249 @@
+---
+title: "Praca domowa 4"
+author: "Michał Pastuszka"
+date: "`r format(Sys.time(), '%d - %m - %Y')`"
+output:
+  html_document:
+    df_print: paged
+    toc: true
+    toc_float: true
+    code_folding: hide
+    number_sections: true
+---
+
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, message=FALSE)
+library(DALEX)
+library(mlr)
+library(OpenML)
+library(mlrMBO)
+parallelMap::parallelStartMulticore(3)
+apts <- apartments
+apts_test <- sample(1:nrow(apts), 0.6*nrow(apts))
+ozone <- OpenML::getOMLDataSet(1494)
+ozone <- ozone$data
+ozone_test <- sample(1:nrow(ozone), 0.6*nrow(ozone))
+set.seed(123, "L'Ecuyer")
+```
+
+# Wstęp
+
+W tym zadaniu przetestujemy działanie algorytmu Support Vector Machine na zbiorach danych apartments z pakietu `DALEX` (regresja) oraz ozone-level-8hr (klasyfikacja) ze strony OpenML: https://www.openml.org/d/1494
+
+```{r dane}
+head(apts)
+head(ozone)
+```
+
+# Testy algorytmu
+
+Do testów wykorzystamy implementację z pakietu `e1071`. Do prównania wykorzystamy błąd średniokwadratowy dla regresjii i miarę f1 dla klasyfikacji.
+
+## Skalowanie danych
+
+Zaczniemy od przetestowania modeli na surowym zbiorze. Celowo wyłączymy skalowanie danych, aby sprawdzić jego wpływ na działanie modelu. Wykorzystamy jądro gaussowskie (radial).
+
+```{r model1, cache=TRUE, message=FALSE}
+taskr <- makeRegrTask("apartments", apts, "m2.price")
+taskc <- makeClassifTask("ozone", ozone, "Class")
+learnerr <- makeLearner("regr.svm", par.vals = list(scale=FALSE))
+learnerc <- makeLearner("classif.svm", par.vals = list(scale=FALSE))
+desc <- makeResampleDesc("CV", iters=3)
+
+wynr <- resample(learnerr, taskr, desc)
+wync <- resample(learnerc, taskc, desc, measures = f1)
+wynr$aggr
+wync$aggr
+```
+
+Po przeskalowaniu: 
+
+```{r model2, cache=TRUE, message=FALSE}
+learnerr <- makeLearner("regr.svm")
+learnerc <- makeLearner("classif.svm")
+
+wynr <- resample(learnerr, taskr, desc)
+wync <- resample(learnerc, taskc, desc, measures = f1)
+wynr$aggr
+wync$aggr
+```
+
+Możemy zauważyć bardzo duża poprawę na zbiorze apartments. W przypadku klasyfikacji wynik też nieco się polepszył. Możemy więc wnoskować, że skalowanie danych jest istotne dla prawidłowego działania algorytmu.
+
+## Optymalizacja hiperparametrów
+
+Spróbujemy teraz osiągnąć lepsze wyniki dostosowując parametry metodą random search. Modyfikować będziemy koszt błędnej klasyfikacji punktów oraz parametr gamma jądra Gaussowskiego.
+
+```{r model3, message=FALSE, cache=TRUE}
+randrpars <- tuneParams(
+learnerr,
+subsetTask(taskr, apts_test),
+resampling = desc,
+measures = mse,
+par.set = makeParamSet(
+    makeNumericParam("cost", lower = 1, upper = 50),
+    makeNumericParam("gamma", lower = 0.01, upper = 10)
+  ),
+control = makeTuneControlRandom(maxit = 100)
+)
+
+randcpars <- tuneParams(
+learnerc,
+subsetTask(taskc, ozone_test),
+resampling = desc,
+measures = f1,
+par.set = makeParamSet(
+    makeNumericParam("cost", lower = 1, upper = 50),
+    makeNumericParam("gamma", lower = 0.01, upper = 10)
+
+  ),
+control = makeTuneControlRandom(maxit = 100)
+)
+learnerrrand <- makeLearner("regr.svm", par.vals = randrpars$x)
+learnercrand <- makeLearner("classif.svm", par.vals = randcpars$x)
+
+wynr <- resample(learnerrrand, taskr, desc)
+wync <- resample(learnercrand, taskc, desc, measures = f1)
+wynr$aggr
+wync$aggr
+```
+
+Oraz wykorzystując optymalizację Bayesowską:
+
+```{r model4, message=FALSE, cache=TRUE, warning=FALSE}
+
+mborpars <- tuneParams(
+learnerr,
+subsetTask(taskr, apts_test),
+resampling = desc,
+measures = mse,
+par.set = makeParamSet(
+    makeNumericParam("cost", lower = 1, upper = 50),
+    makeNumericParam("gamma", lower = 0.01, upper = 10)
+  ),
+control = makeTuneControlMBO()
+)
+
+mbocpars <- tuneParams(
+learnerc,
+subsetTask(taskc, ozone_test),
+resampling = desc,
+measures = f1,
+par.set = makeParamSet(
+    makeNumericParam("cost", lower = 1, upper = 50),
+    makeNumericParam("gamma", lower = 0.01, upper = 10)
+  ),
+control = makeTuneControlMBO()
+)
+
+learnerrmbo <- makeLearner("regr.svm", par.vals = mborpars$x)
+learnercmbo <- makeLearner("classif.svm", par.vals = mbocpars$x)
+
+wynr <- resample(learnerrmbo, taskr, desc)
+wync <- resample(learnercmbo, taskc, desc, measures = f1)
+wynr$aggr
+wync$aggr
+```
+
+W obu przypadkach lepsze wyniki dała optymalizacja Bayesowska. Co ciekawe, w przypadku zadania klasyfikacji parametry znalezione metodą losowego wyszukiwania dały gorszy wynik niż domyślne. Należałoby więc zwiększyć liczbę iteracji lub zawęzić przestrzeń wyszukiwania.
+
+# PDP
+
+Stworzymy teraz wykresy częściowych zależności dla poszczególnych zmiennych zbioru apartments. Porównamy na nich stworzone wcześniej modele oraz model lasu losowego.
+```{r las}
+forest <- makeLearner("regr.randomForest")
+wynr <- resample(forest, taskr, desc)
+wynr$aggr
+```
+
+```{r dalek}
+
+custom_predict <- function(object, newdata) {pred <- predict(object, newdata=newdata)
+                                              response <- pred$data$response
+                                              return(response)}
+
+
+
+learnerr <- train(learnerr, taskr)
+learnerrrand <- train(learnerrrand, taskr)
+learnerrmbo <- train(learnerrmbo, taskr)
+forest <- train(forest, taskr)
+
+explainer_def <- explain(
+  model = learnerr,
+  data = apts,
+  y = apts$m2.price,
+  predict_function = custom_predict,
+  label = "default"
+  )
+
+explainer_rand <- explain(
+  model = learnerrrand,
+  data = apts,
+  y = apts$m2.price,
+  predict_function = custom_predict,
+  label = "random search"
+  )
+
+explainer_bay <- explain(
+  model = learnerrmbo,
+  data = apts,
+  y = apts$m2.price,
+  predict_function = custom_predict,
+  label = "Bayesian"
+  )
+
+explainer_for <- explain(
+  model = forest,
+  data = apts,
+  y = apts$m2.price,
+  predict_function = custom_predict,
+  label = "Random forest"
+  )
+
+sv_def <- single_variable(explainer_def, variable =  "construction.year", type = "pdp")
+sv_rand <- single_variable(explainer_rand, variable =  "construction.year", type = "pdp")
+sv_bay <- single_variable(explainer_bay, variable =  "construction.year", type = "pdp")
+sv_for <- single_variable(explainer_for, variable =  "construction.year", type = "pdp")
+
+plot(sv_def, sv_rand, sv_bay, sv_for)
+```
+
+```{r plot2}
+sv_def <- single_variable(explainer_def, variable =  "surface", type = "pdp")
+sv_rand <- single_variable(explainer_rand, variable =  "surface", type = "pdp")
+sv_bay <- single_variable(explainer_bay, variable =  "surface", type = "pdp")
+sv_for <- single_variable(explainer_for, variable =  "surface", type = "pdp")
+
+plot(sv_def, sv_rand, sv_bay, sv_for)
+```
+
+```{r plot3}
+sv_def <- single_variable(explainer_def, variable =  "floor", type = "pdp")
+sv_rand <- single_variable(explainer_rand, variable =  "floor", type = "pdp")
+sv_bay <- single_variable(explainer_bay, variable =  "floor", type = "pdp")
+sv_for <- single_variable(explainer_for, variable =  "floor", type = "pdp")
+
+plot(sv_def, sv_rand, sv_bay, sv_for)
+```
+
+```{r plot4}
+sv_def <- single_variable(explainer_def, variable =  "no.rooms", type = "pdp")
+sv_rand <- single_variable(explainer_rand, variable =  "no.rooms", type = "pdp")
+sv_bay <- single_variable(explainer_bay, variable =  "no.rooms", type = "pdp")
+sv_for <- single_variable(explainer_for, variable =  "no.rooms", type = "pdp")
+
+plot(sv_def, sv_rand, sv_bay, sv_for)
+```
+
+```{r plot5}
+sv_def <- single_variable(explainer_def, variable =  "district", type = "pdp")
+sv_rand <- single_variable(explainer_rand, variable =  "district", type = "pdp")
+sv_bay <- single_variable(explainer_bay, variable =  "district", type = "pdp")
+sv_for <- single_variable(explainer_for, variable =  "district", type = "pdp")
+
+plot(sv_bay, sv_for)
+```
+
+Największe różnice między SVM i lasami losowymi występują na końcach przedziałów. Lasy mają charakter skokowy i tendencję do uśredniania skrajnych obserwacji, podczas gdy SVM ma gładszą charakterystykę odpowiedzi na zmienne.

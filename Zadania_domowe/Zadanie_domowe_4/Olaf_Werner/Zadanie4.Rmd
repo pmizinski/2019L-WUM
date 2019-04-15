@@ -1,0 +1,172 @@
+---
+title: "Zadanie 4"
+author: "Olaf Werner"
+date: "April 14, 2019"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+##Zadanie
+
+W tym zadaniu sprawdzimy jak działa svm. Za zbiory danych mam dane o domach z DALEXa oraz zbiór o winach z OpenMLa.
+
+```{r echo=FALSE}
+#wczytanie bibliotek, zbiorow i tak dalej
+library(OpenML)
+library(DALEX)
+library(mlr)
+set.seed(123, "L'Ecuyer")
+#dane<-getOMLDataSet(40498)
+#write.csv(train,"wine.csv") 
+wina<-read.csv("wine.csv")
+wina$Class<-factor(wina$Class)
+wina<-wina[-1]
+domy<-DALEX::apartments
+custom_predict<-function(object, newdata) {pred <- predict(object, newdata=newdata)
+response <- pred$data$response
+return(response)}
+```
+
+Zobaczmy o nich informacje
+
+```{r echo=FALSE}
+str(wina)
+str(domy)
+```
+
+##Ważność skalowania
+W tej implementacji svm skalowanie jest parametrem domyślnym, zobaczmy więc co się stanie jak je wyłączymy. 
+
+```{r}
+wina_task = makeRegrTask(id = "wina", data = wina, target ="V1")
+domy_task = makeRegrTask(id = "domy", data = domy, target ="m2.price")
+
+learner<-makeLearner("regr.svm")
+learner_no_scale<-makeLearner("regr.svm",par.vals = list(scale=FALSE))
+
+cv <- makeResampleDesc("CV", iters = 5)
+test_wina <- resample(learner, wina_task, cv,measures = rmse,show.info = FALSE)
+test_domy <- resample(learner, domy_task, cv,measures = rmse,show.info = FALSE)
+test_wina_no_scale <- resample(learner_no_scale, wina_task, cv,measures = rmse,show.info = FALSE)
+test_domy_no_scale <- resample(learner_no_scale, domy_task, cv,measures = rmse,show.info = FALSE)
+
+#ze skalowaniem
+#wina
+test_wina$aggr
+#domy
+test_domy$aggr
+#ze skalowaniem
+#wina
+test_wina_no_scale$aggr
+#domy
+test_domy_no_scale$aggr
+```
+
+Widzimy drastyczny spadek jakości, artykuł nie kłamał.
+
+##Porównanie różnych modeli 
+
+Dzielimy nasze zbiory na treningowe i testowe
+
+```{r}
+train_index_domy <- sample(1:nrow(domy), 0.8 * nrow(domy))
+train_index_wina <- sample(1:nrow(wina), 0.8 * nrow(wina))
+
+dalex_train_domy <- domy[train_index_domy,]
+dalex_test_domy <- domy[-train_index_domy,]
+
+dalex_train_wina <- wina[train_index_wina,]
+dalex_test_wina <- wina[-train_index_wina,]
+```
+
+Tworzymy modele
+
+```{r}
+dalex_svm_domy <- train(learner, domy_task, subset=train_index_domy)
+dalex_svm_wina <- train(learner, wina_task, subset=train_index_wina)
+
+las<-makeLearner("regr.randomForest")
+dalex_las_domy <- train(las, domy_task, subset=train_index_domy)
+dalex_las_wina <- train(las, wina_task, subset=train_index_wina)
+```
+
+Teraz tuningujemy svm, według artykułu najważniejszymi parametrami jest kernel oraz stała kosztu.
+
+```{r cache=TRUE}
+svm_pars_domy <- tuneParams(show.info = FALSE,
+  makeLearner("regr.svm"),
+  subsetTask(makeRegrTask(id = "domy", data = dalex_train_domy, target ="m2.price")),
+  resampling = cv5,
+  measures = mlr::rmse,
+  par.set = makeParamSet(
+    makeDiscreteParam("cost", values = seq(0.1,3,by=0.2)),
+    makeDiscreteParam("kernel", values = c("linear","polynomial","radial","sigmoid"))
+  ),
+  control = makeTuneControlRandom(maxit = 20)
+)
+
+learner_tuned_domy<-makeLearner("regr.svm",par.vals = svm_pars_domy$x)
+
+svm_pars_wina <- tuneParams(show.info = FALSE,
+  makeLearner("regr.svm"),
+  subsetTask(makeRegrTask(id = "wina", data = dalex_train_wina, target ="V1")),
+  resampling = cv5,
+  measures = mlr::rmse,
+  par.set = makeParamSet(
+    makeDiscreteParam("cost", values = seq(0.1,3,by=0.2)),
+    makeDiscreteParam("kernel", values = c("linear","polynomial","radial","sigmoid"))
+  ),
+  control = makeTuneControlRandom(maxit = 20)
+)
+
+learner_tuned_wina<-makeLearner("regr.svm",par.vals = svm_pars_wina$x)
+
+
+dalex_svm_tuned_domy <- train(learner_tuned_domy, domy_task, subset=train_index_domy)
+dalex_svm_tuned_wina <- train(learner_tuned_wina, wina_task, subset=train_index_wina)
+```
+
+Teraz używamy pakietu DALEX dla domów
+
+```{r}
+explainer_svm <- DALEX::explain(dalex_svm_domy,data=dalex_test_domy[-1] ,custom_predict,
+                                        y=dalex_test_domy[[1]], label ="svm")
+
+explainer_svm_tuned <- DALEX::explain(dalex_svm_tuned_domy,data=dalex_test_domy[-1] ,custom_predict,
+                                        y=dalex_test_domy[[1]], label ="svm_tuned")
+
+explainer_rf <- DALEX::explain(dalex_las_domy,data=dalex_test_domy[-1] ,custom_predict,
+                                        y=dalex_test_domy[[1]], label ="rf")
+
+single_svm<-DALEX::single_variable(explainer_svm,variable = "construction.year",type = "pdp")
+single_svm_tuned<-DALEX::single_variable(explainer_svm_tuned,variable = "construction.year",type = "pdp")
+single_rf<-DALEX::single_variable(explainer_rf,variable = "construction.year",type = "pdp")
+plot(single_svm,single_svm_tuned,single_rf)
+plot(model_performance(explainer_svm),model_performance(explainer_svm_tuned),model_performance(explainer_rf))
+```
+
+Teraz używamy pakietu DALEX dla win
+
+```{r}
+explainer_svm <- DALEX::explain(dalex_svm_wina,data=dalex_test_wina[-1] ,custom_predict,
+                                        y=dalex_test_wina[[1]], label ="svm")
+
+explainer_svm_tuned <- DALEX::explain(dalex_svm_tuned_wina,data=dalex_test_wina[-1] ,custom_predict,
+                                        y=dalex_test_wina[[1]], label ="svm_tuned")
+
+explainer_rf <- DALEX::explain(dalex_las_wina,data=dalex_test_wina[-1] ,custom_predict,
+                                        y=dalex_test_wina[[1]], label ="rf")
+
+single_svm<-DALEX::single_variable(explainer_svm,variable = "V4",type = "pdp")
+single_svm_tuned<-DALEX::single_variable(explainer_svm_tuned,variable = "V4",type = "pdp")
+single_rf<-DALEX::single_variable(explainer_rf,variable = "V4",type = "pdp")
+plot(single_svm,single_svm_tuned,single_rf)
+plot(model_performance(explainer_svm),model_performance(explainer_svm_tuned),model_performance(explainer_rf))
+```
+
+##Podsumowanie
+Jak widzimy rf zachowuje się inaczej niż svm, a tuning nie dał drastycznego wzrostu. 
+

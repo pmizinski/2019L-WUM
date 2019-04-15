@@ -1,0 +1,266 @@
+---
+title: "HubertBanieckiPd4"
+author: "Hubert Baniecki"
+date: "13 04 2019"
+output:
+  html_document:
+    df_print: paged
+    toc: true
+    toc_float: true
+    code_folding: hide
+    number_sections: true
+---
+
+```{r setup, include=FALSE, warning=FALSE}
+knitr::opts_chunk$set(warning=FALSE, message=FALSE, error=FALSE)
+```
+
+
+# Dane
+
+Do tej pracy domowej, oprócz danych `apartments`, wybrałem dane do klasyfikacji badań cukrzycy `diabetes`.
+
+```{r}
+set.seed(6666) 
+library(knitr)
+library(mlr)
+library(DALEX)
+library(parallelMap)
+library(OpenML)
+library(gridExtra)
+parallelStartSocket(8)
+
+dataset <- getOMLDataSet(data.name = "diabetes")
+diabetesData <- dataset$data
+diabetesData$class <- as.factor(ifelse(diabetesData$class=="tested_positive",1,0))
+
+apartmentsData <- apartments
+```
+
+# Bazowy model svm
+
+Na początku zróbmy bazowy model svm dla tych danych.
+
+```{r}
+cv <- makeResampleDesc("CV", iters = 5)
+clearn <- makeLearner("classif.svm", predict.type = "prob", par.vals = list(scale = FALSE))
+rlearn <- makeLearner("regr.svm", predict.type = "response", par.vals = list(scale = FALSE))
+apartmentsTask <- makeRegrTask(id = "task1", data = apartmentsData, target = "m2.price")
+diabetesTask <- makeClassifTask(id = "task2", data = diabetesData, target = "class")
+```
+
+`apartments`
+```{r}
+r <- resample(rlearn, apartmentsTask, cv, measures = list(mse,rmse,mae), show.info = FALSE)
+a1 <- r$aggr
+```
+
+`diabetes`
+```{r}
+r <- resample(clearn, diabetesTask, cv, measures = list(acc, auc), show.info = FALSE)
+d1 <- r$aggr
+```
+
+# Model po normalizacji
+
+Domyślny svm już normalizuje dane. Sprawdźmy, czy wyniki będą lepsze. 
+
+```{r}
+clearn <- makeLearner("classif.svm", predict.type = "prob")
+rlearn <- makeLearner("regr.svm", predict.type = "response")
+```
+
+`apartments`
+```{r}
+r <- resample(rlearn, apartmentsTask, cv, measures = list(mse,rmse,mae), show.info = FALSE)
+a2 <- r$aggr
+```
+
+`diabetes`
+```{r}
+r <- resample(clearn, diabetesTask, cv, measures = list(acc,auc), show.info = FALSE)
+d2 <- r$aggr
+```
+
+# Hyperparameter Tuning
+
+Chcąc ulepszyć nasz model, poszukamy lepszych wartości hiperparametrów. Porównamy grid i random search. <br/> 
+Dla regresji będziemy minimalizować rmse, a dla klasyfikacji maksymalizować auc.
+
+```{r}
+ps <- makeParamSet(
+  makeNumericParam("cost", lower = -10, upper = 10, trafo = function(x) 2^x),
+  makeNumericParam("gamma", lower = -10, upper = 10, trafo = function(x) 2^x)
+)
+ctrlRandom <- makeTuneControlRandom(maxit = 900L)
+ctrlGrid <- makeTuneControlGrid(resolution = 30L)
+```
+
+## Grid
+
+`apartments`
+```{r}
+res <- tuneParams(rlearn, task = apartmentsTask, measures = rmse,
+                  show.info = FALSE, resampling = cv, par.set = ps, control = ctrlGrid)
+
+lrn <- setHyperPars(rlearn, par.vals = res$x)
+r <- resample(lrn, apartmentsTask, cv, measures = list(mse,rmse,mae))
+a3 <- r$aggr
+kable(data.frame(res$x))
+```
+
+`diabetes`
+```{r}
+res <- tuneParams(clearn, task = diabetesTask, measures = auc,
+                  show.info = FALSE, resampling = cv, par.set = ps, control = ctrlGrid)
+
+lrn <- setHyperPars(clearn, par.vals = res$x)
+r <- resample(lrn, diabetesTask, cv, measures = list(acc, auc))
+d3 <- r$aggr
+kable(data.frame(res$x))
+```
+
+## Random
+
+`apartments`
+```{r}
+res <- tuneParams(rlearn, task = apartmentsTask, measures = rmse,
+                  show.info = FALSE, resampling = cv, par.set = ps, control = ctrlRandom)
+
+rlearn2 <- setHyperPars(rlearn, par.vals = res$x)
+r <- resample(rlearn2, apartmentsTask, cv, measures = list(mse,rmse,mae))
+a4 <- r$aggr
+kable(data.frame(res$x))
+```
+
+`diabetes`
+```{r}
+res <- tuneParams(clearn, task = diabetesTask, measures = auc,
+                  show.info = FALSE, resampling = cv, par.set = ps, control = ctrlRandom)
+
+clearn2 <- setHyperPars(clearn, par.vals = res$x)
+r <- resample(clearn2, diabetesTask, cv, measures = list(acc, auc))
+d4 <- r$aggr
+kable(data.frame(res$x))
+```
+
+# Porównanie wyników
+
+Ogólnie widać, że normalizacja jest bardzo istotna dla tego modelu. <br/>
+Właśnie dlatego w niektórych implementacjach jest ona robiona automatycznie, kiedy dopasowujemy model. <br/>
+Szukanie lepszych hiperparametrów dało jakiś efekt. Udało się poprawić jeden model.<br/>
+Dla większych ilości iteracji nie ma znacznych różnic pomiędzy grid i random search.
+
+```{r}
+kable(data.frame(rawData = a1,normalizedData = a2, gridSearch = a3, randomSearch = a4))
+kable(data.frame(rawData = d1,normalizedData = d2, gridSearch = d3, randomSearch = d4))
+```
+
+# PDP svm vs rf
+
+Poniżej porównanie wykresów PDP dla svm, svm z optymalizacją hiperparametrów i randomForest. <br/>
+Widać znaczne różnice pomiędzy modelami svm i rf. <br/>
+Odpowiedź w svm po optymalizacji zdaje się być "mniej powyginana".
+
+```{r}
+clearn3 <- makeLearner("classif.randomForest", predict.type = "prob")
+rlearn3 <- makeLearner("regr.randomForest", predict.type = "response")
+
+custom_predict <- function(object, newdata) {pred <- predict(object, newdata=newdata)
+                                              response <- pred$data$response
+                                              return(response)}
+custom_predict_classif <- function(object, newdata) {pred <- predict(object, newdata=newdata)
+                                              response <- pred$data[,3]
+                                              return(response)}
+```
+
+## `apartments`
+
+```{r fight.width = 10, fig.height = 9}
+regr_a2 <- mlr::train(rlearn, apartmentsTask)
+regr_a4 <- mlr::train(rlearn2, apartmentsTask)
+regr_rf <- mlr::train(rlearn3, apartmentsTask)
+
+explainer_a2 <- explain(regr_a2, data = apartmentsData, predict_function = custom_predict, label="svm")
+explainer_a4 <- explain(regr_a4, data = apartmentsData, predict_function = custom_predict, label="svmTuned")
+explainer_rf <- explain(regr_rf, data = apartmentsData, predict_function = custom_predict, label="randomForest")
+
+pdp_a2_cr  <- variable_response(explainer_a2, variable =  "construction.year",  type = "pdp")
+pdp_a4_cr  <- variable_response(explainer_a4, variable =  "construction.year", type = "pdp")
+pdp_rf_cr  <- variable_response(explainer_rf, variable =  "construction.year", type = "pdp")
+
+pdp_a2_s  <- variable_response(explainer_a2, variable =  "surface",  type = "pdp")
+pdp_a4_s  <- variable_response(explainer_a4, variable =  "surface", type = "pdp")
+pdp_rf_s  <- variable_response(explainer_rf, variable =  "surface", type = "pdp")
+
+pdp_a2_f  <- variable_response(explainer_a2, variable =  "floor",  type = "pdp")
+pdp_a4_f  <- variable_response(explainer_a4, variable =  "floor", type = "pdp")
+pdp_rf_f  <- variable_response(explainer_rf, variable =  "floor", type = "pdp")
+
+pdp_a2_nr  <- variable_response(explainer_a2, variable =  "no.rooms",  type = "pdp")
+pdp_a4_nr  <- variable_response(explainer_a4, variable =  "no.rooms", type = "pdp")
+pdp_rf_nr  <- variable_response(explainer_rf, variable =  "no.rooms", type = "pdp")
+
+grid.arrange(plot(pdp_a2_cr, pdp_a4_cr, pdp_rf_cr), plot(pdp_a2_s, pdp_a4_s, pdp_rf_s),
+             plot(pdp_a2_f, pdp_a4_f, pdp_rf_f), plot(pdp_a2_nr, pdp_a4_nr, pdp_rf_nr),
+             nrow = 2)
+
+```
+
+## `diabetes`
+
+```{r fight.width = 10, fig.height = 18}
+classif_d2 <- mlr::train(clearn, diabetesTask)
+classif_d4 <- mlr::train(clearn2, diabetesTask)
+classif_rf <- mlr::train(clearn3, diabetesTask)
+
+explainer_d2 <- explain(classif_d2, data = diabetesData,
+                        predict_function = custom_predict_classif, label="svm")
+explainer_d4 <- explain(classif_d4, data = diabetesData,
+                        predict_function = custom_predict_classif, label="svmTuned")
+explainer_rf2 <- explain(classif_rf, data = diabetesData,
+                         predict_function = custom_predict_classif, label="randomForest")
+
+pdp_d2_preg  <- variable_response(explainer_d2, variable =  "preg", type = "pdp")
+pdp_d4_preg  <- variable_response(explainer_d4, variable =  "preg", type = "pdp")
+pdp_rf2_preg  <- variable_response(explainer_rf2, variable =  "preg", type = "pdp")
+
+pdp_d2_plas  <- variable_response(explainer_d2, variable =  "plas", type = "pdp")
+pdp_d4_plas  <- variable_response(explainer_d4, variable =  "plas", type = "pdp")
+pdp_rf2_plas  <- variable_response(explainer_rf2, variable =  "plas", type = "pdp")
+
+pdp_d2_pres  <- variable_response(explainer_d2, variable =  "pres", type = "pdp")
+pdp_d4_pres  <- variable_response(explainer_d4, variable =  "pres", type = "pdp")
+pdp_rf2_pres  <- variable_response(explainer_rf2, variable =  "pres", type = "pdp")
+
+pdp_d2_skin  <- variable_response(explainer_d2, variable =  "skin", type = "pdp")
+pdp_d4_skin  <- variable_response(explainer_d4, variable =  "skin", type = "pdp")
+pdp_rf2_skin  <- variable_response(explainer_rf2, variable =  "skin", type = "pdp")
+
+pdp_d2_insu  <- variable_response(explainer_d2, variable =  "insu", type = "pdp")
+pdp_d4_insu  <- variable_response(explainer_d4, variable =  "insu", type = "pdp")
+pdp_rf2_insu  <- variable_response(explainer_rf2, variable =  "insu", type = "pdp")
+
+pdp_d2_mass  <- variable_response(explainer_d2, variable =  "mass", type = "pdp")
+pdp_d4_mass  <- variable_response(explainer_d4, variable =  "mass", type = "pdp")
+pdp_rf2_mass  <- variable_response(explainer_rf2, variable =  "mass", type = "pdp")
+
+pdp_d2_pedi <- variable_response(explainer_d2, variable =  "pedi", type = "pdp")
+pdp_d4_pedi  <- variable_response(explainer_d4, variable =  "pedi", type = "pdp")
+pdp_rf2_pedi  <- variable_response(explainer_rf2, variable =  "pedi", type = "pdp")
+
+pdp_d2_age  <- variable_response(explainer_d2, variable =  "age", type = "pdp")
+pdp_d4_age  <- variable_response(explainer_d4, variable =  "age", type = "pdp")
+pdp_rf2_age  <- variable_response(explainer_rf2, variable =  "age", type = "pdp")
+
+grid.arrange(plot(pdp_d2_preg, pdp_d4_preg, pdp_rf2_preg), plot(pdp_d2_plas, pdp_d4_plas, pdp_rf2_plas),
+             plot(pdp_d2_pres, pdp_d4_pres, pdp_rf2_pres), plot(pdp_d2_skin, pdp_d4_skin, pdp_rf2_skin),
+             plot(pdp_d2_insu, pdp_d4_insu, pdp_rf2_insu), plot(pdp_d2_mass, pdp_d4_mass, pdp_rf2_mass),
+             plot(pdp_d2_pedi, pdp_d4_pedi, pdp_rf2_pedi), plot(pdp_d2_age, pdp_d4_age, pdp_rf2_age),
+             nrow = 4)
+```
+
+```{r}
+parallelStop()
+```
+
