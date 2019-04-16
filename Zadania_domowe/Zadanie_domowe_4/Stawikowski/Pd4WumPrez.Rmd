@@ -1,0 +1,341 @@
+---
+title: "Support-vector machine"
+author: "Micha³ Stawikowski"
+date: "`r format(Sys.time(), '%d - %m - %Y')`"
+output: 
+  html_document:
+    theme: flatly
+    df_print: paged
+    toc: true
+    toc_float: true
+    code_folding: hide
+    number_sections: true
+---
+```{r setup, cache = F}
+knitr::opts_chunk$set(cache=TRUE)
+```
+
+```{r echo=FALSE, include=FALSE, warning=FALSE, message=FALSE,eval=FALSE}
+library(DALEX)
+library(OpenML)
+library(dplyr)
+library(mlrCPO)
+library(BBmisc)
+library(randomForest)
+library(mlrMBO)
+library(DiceKriging)
+library(rgenoud)
+# Wczytywanie
+
+# Apartments
+
+apartments <- DALEX::apartments
+test <- DALEX::apartments_test
+
+
+# Wine
+
+white_wine <- getOMLDataSet(data.id = 40498L)
+wine <- white_wine$data
+
+train_set_wine <- sample_frac(wine, 0.6)
+test_set <- setdiff(wine, train_set_wine)
+
+```
+#Wstêp
+
+W tym raporcie spróbujê przyjrzeæ siê bli¿ej algorytmowi `SVM`, który wykorzystam do przeprowadzenia regresji na dwóch zbiorach danych. Wybiorê najbardziej istotne hipermparametry regresora i postaram siê dostroiæ je do regresji na zbiorach danych `Apartments` z pakietu `DALEX` oraz `White_wine`. Zbadam jak algorytm zmienia siê wraz z modyfikacj¹ hiperparametrów, a tak¿e porównam go z modelem drzewiastym.
+
+#Normalizacja danych 
+
+Z [raportu](http://pyml.sourceforge.net/doc/howto.pdf) wynika, ¿e normalizacja danych mo¿e mieæ wp³yw na dzia³anie alogrytmu `SVM`. Porównam wyniki algorytmu dla surowych danych `Apartments`, a tak¿e dla wyskalowanych i wystandaryzowanych odpowiedników.
+
+Wyniki bez skalowania.
+```{r warning=FALSE, message=FALSE}
+#Apartments
+
+models_task <- makeRegrTask(id = "apart", data = apartments, target = "m2.price")
+models_svm_lrn <- makeLearner("regr.ksvm")
+regr_svm <- mlr::train(models_svm_lrn, models_task)
+
+performance(predict(regr_svm, newdata = test),
+            measures = list(mse, rmse, mae, rsq))
+
+```
+`Apartments`
+```{r}
+models_task2T <- makeRegrTask(id = "wine", data = train_set_wine, target = "V1")
+models_svm_lrn2T <- makeLearner("regr.ksvm")
+regr_svm2T <- mlr::train(models_svm_lrn2T, models_task2T)
+
+performance(predict(regr_svm2T, newdata = test_set),
+            measures = list(mse, rmse, mae, rsq))
+```
+`White_wine`
+
+
+
+Teraz zobaczymy jak wp³ynie na wyniki normalizacja danych dla zbioru `Apartments`.
+
+```{r}
+# Wyniki ze skalowaniem
+
+## Skalowanie
+transformacja <- cpoScaleRange(affect.names = c("construction.year", "surface","floor","no.rooms"))
+models_task_sc <- makeRegrTask(id = "apart", data = apartments, target = "m2.price")
+transformed_task <- models_task_sc %>>%
+  transformacja 
+
+models_svm_lrn_sc <- mlr::train(makeLearner("regr.ksvm", 
+                                            predict.type = "response"), transformed_task)
+updateData <- retrafo(transformed_task)
+performance(predict(models_svm_lrn_sc, newdata = (test %>>% updateData)),
+            measures = list(mse, rmse, mae, rsq))
+
+```
+Skalowanie na przedzia³ `[0,1]`
+
+```{r}
+## Standaryzacja 
+apart_full <- rbind(apartments, test)
+
+apart_full <- normalizeFeatures(apart_full, target = 'm2.price', method = "standardize")
+apartments <- apart_full[1:1000,]
+test <- apart_full[1000:10000,]
+
+models_task <- makeRegrTask(id = "apart", data = apartments, target = "m2.price")
+models_svm_lrn <- makeLearner("regr.ksvm")
+regr_svm <- mlr::train(models_svm_lrn, models_task)
+
+performance(predict(regr_svm, newdata = test),
+            measures = list(mse, rmse, mae, rsq))
+```
+Standaryzacja
+
+Jak widzimy ani skalowanie, ani standaryzacja nie wnios³y du¿ej ró¿nicy w wynikach regresji dla danych `Apartments`, choæ widaæ lekk¹ poprawê, podobny wynik otrzyma³em dla drugiego zbioru danych. Mo¿liwe, ¿e lepsze wyniki mo¿na otrzymaæ dla innych rodzajów normalizacji lub dla zbiorów danych o innej charakterystyce.
+
+#Strojenie hiperparametrów
+
+W tej czêœci raportu bêdê stara³ siê znaleŸæ jak najlepsze parametry algorytmu dla naszych problemów.
+
+##Wybór j¹dra
+
+Pierwszym krokiem bêdzie wybór funkcji j¹dra. Porównamy trzy rodzaje j¹der:
+
+* `J¹dro Gaussowskie`
+
+* `J¹dro Wielomianowe`
+
+* `J¹dro Liniowe`
+
+Wed³ug wczeœniej wspomnianego artyku³u najlepiej powinien poradziæ sobie model z j¹drem gaussowskim, a najgorzej powinno wypaœæ najprostsze j¹dro liniowe. SprawdŸmy to.
+
+```{r}
+## Gauss
+
+models_task <- makeRegrTask(id = "apart", data = apartments, target = "m2.price")
+models_svm_lrn <- makeLearner("regr.ksvm")
+regr_svm <- mlr::train(models_svm_lrn, models_task)
+
+performance(predict(regr_svm, newdata = test),
+            measures = list(mse, rmse, mae, rsq))
+```
+J¹dro gaussowskie.
+
+```{r}
+
+## Liniowe
+
+models_task <- makeRegrTask(id = "apart", data = apartments, target = "m2.price")
+models_svm_lrn <- makeLearner("regr.ksvm", kernel = "vanilladot")
+regr_svm <- mlr::train(models_svm_lrn, models_task)
+
+performance(predict(regr_svm, newdata = test),
+            measures = list(mse, rmse, mae, rsq))
+
+```
+J¹dro liniowe
+```{r}
+## Wielomianowe
+
+models_task <- makeRegrTask(id = "apart", data = apartments, target = "m2.price")
+models_svm_lrn <- makeLearner("regr.ksvm", kernel = "polydot")
+regr_svm <- mlr::train(models_svm_lrn, models_task)
+
+performance(predict(regr_svm, newdata = test),
+            measures = list(mse, rmse, mae, rsq))
+```
+Oraz j¹dro wielomianowe. 
+
+Tak jak przewidywaliœmy najlepiej poradzi³o sobie j¹dro gaussowskie, które jest domyœlnie ustawione w implementacji `SVM`, z której bêdê korzysta³ w dalszej czêœci raportu - `ksvm`.
+
+##Strojenie najwa¿niejszych parametrów
+
+W artykule mo¿emy przeczytaæ, ¿e najistotniejszymi parametrami s¹ `C` - "cost of constraints violation" i `Sigma` - "inverse kernel width" dla j¹dra Gaussowskiego. Pierwszy odpowiada za kary nak³adane za b³êdn¹ klasyfikacje i "b³êdy marginesów", drugi odpowiada za sposób w jaki algorytm wyznacza granicê dziel¹c¹ dwie klasy. Do wyszukania korzystnych parametrów pos³u¿ymy siê funkcj¹ losowego szukania parametrów - `random search`. 
+
+```{r eval=FALSE}
+# Strojenie hiperparametrów metod¹ random search
+
+
+
+num_ps = makeParamSet(
+  makeNumericParam("C", lower = -10, upper = 10, trafo = function(x) 10^x),
+  makeNumericParam("sigma", lower = -10, upper = 10, trafo = function(x) 10^x)
+)
+
+ctrl = makeTuneControlRandom(maxit = 200L)
+rdesc = makeResampleDesc("CV", iters = 3L)
+
+# Apartaments
+
+resA = tuneParams("regr.ksvm", task = models_task, resampling = rdesc,
+                  par.set = num_ps, control = ctrl)
+
+# Wine
+
+resW =  tuneParams("regr.ksvm", task = models_task2, resampling = rdesc,
+                   par.set = num_ps, control = ctrl)
+
+```
+
+```{r}
+print(resA)
+dataA = generateHyperParsEffectData(resA)
+plotHyperParsEffect(data, x = "iteration", y = "mse.test.mean",
+                    plot.type = "line")
+```
+
+Zbiór `Apartments`.
+
+```{r}
+print(resW)
+dataW = generateHyperParsEffectData(resW)
+plotHyperParsEffect(dataW, x = "iteration", y = "mse.test.mean",
+                    plot.type = "line")
+```
+
+Zbiór `white_wines`.
+
+## Bonus - model-based optimization (aka Bayesian optimization)
+
+```{r eval=FALSE}
+par.set = makeParamSet(
+  makeNumericParam("cost", -15, 15, trafo = function(x) 2^x),
+  makeNumericParam("gamma", -15, 15, trafo = function(x) 2^x)
+)
+
+ctrl2 = makeMBOControl()
+ctrl2 = setMBOControlTermination(ctrl2, iters = 5)
+tune.ctrl = makeTuneControlMBO(mbo.control = ctrl2)
+resMBO = tuneParams(makeLearner("regr.ksvm"), models_task, cv3, par.set = par.set, control = tune.ctrl,
+  show.info = FALSE)
+```
+```{r}
+print(resMBO)
+dataMBO = generateHyperParsEffectData(resMBO)
+plotHyperParsEffect(dataMBO, x = "iteration", y = "mse.test.mean",
+                    plot.type = "line")
+```
+
+Otrzymane wyniki modeli z wystrojonymi parametrami prezentuj¹ siê lepiej ni¿ wyniki algorytmów z domyœlnymi parametrami. `Optymalizacja Bayesowska` uzyka³a nieznacznie lepszy wyniki od `random search` dla zbioru `apartments` dla zaskakuj¹co mniejszej liczby iteracji.
+
+#Wykresy PDP i porównanie z randomForest
+
+Aby porównaæ modele przed strojeniem i po u¿yjemy wykresów `PDP` z wybran¹ zmienn¹, od której bêdzie zale¿a³a wartoœæ przewidywana. W przypadku `Apartments` bêdzie to `construction.year`, a dla `white_wines` zmienna `V3`. Z modelami svm porównamy tak¿e algorytm 
+`RandomForest`.
+
+## RandomForest
+```{r}
+# help
+custom_predict <- function(object, newdata) {pred <- predict(object, newdata=newdata)
+response <- pred$data$response
+return(response)}
+
+# random forest
+# Apartments
+
+set.seed(59)
+apartments_rf_model <- randomForest(m2.price ~ ., data = apartments)
+predicted_mi2_rf <- predict(apartments_rf_model, test)
+mean((predicted_mi2_rf - test$m2.price)^2)
+```
+Wynik dla `Apartments`.
+```{r}
+# Wine
+
+wine_rf_model <- randomForest(V1 ~ ., data = train_set_wine)
+predicted_V1_rf <- predict(wine_rf_model, test_set)
+mean((predicted_V1_rf - test_set$V1)^2)
+
+
+```
+Wynik dla `White_wine`.
+
+Las losowy poradzi³ sobie gorzej od wystrojonego `SVM` dla danych `Apartments`, ale osi¹gn¹³ lepsze wyniki od odpowiadaj¹cego modelu dla danych `White_wines`.
+
+## Wykresy PDP
+
+```{r eval=FALSE}
+# Explainer
+
+# apartments
+
+explainer_svmA <- explain(regr_svm, data = dplyr::select(apartments, -m2.price),
+                          y=apartments$m2.price, predict_function = custom_predict, label = "svmA")
+
+explainer_svmA2 <- explain(regr_svmT, data = dplyr::select(apartments, -m2.price),
+                           y=apartments$m2.price, predict_function = custom_predict, label = "svmAT")
+
+explainer_rfA <- explain(apartments_rf_model, 
+                         data = apartmentsTest[,2:6], y = apartmentsTest$m2.price)
+
+# wine
+
+explainer_svmW <- explain(regr_svm2, data = dplyr::select(train_set_wine, -V1),
+                          y=train_set_wine$V1, predict_function = custom_predict, label = "svmW")
+
+explainer_svmWT <- explain(regr_svm2T, data = dplyr::select(train_set_wine, -V1),
+                           y=train_set_wine$V1, predict_function = custom_predict, label = "svmWT")
+
+explainer_rfW <- explain(wine_rf_model, 
+                         data = dplyr::select(train_set_wine, -V1), y=train_set_wine$V1)
+
+```
+
+```{r eval=FALSE}
+# PDP
+
+#Apartments
+
+sv_rf  <- single_variable(explainer_rfA, variable =  "construction.year", type = "pdp")
+sv_svmA  <- single_variable(explainer_svmA, variable =  "construction.year", type = "pdp")
+sv_svmA2  <- single_variable(explainer_svmA2, variable =  "construction.year", type = "pdp")
+```
+
+Wykresy dla `Apartments`.
+
+```{r}
+plot(sv_rf,sv_svmA,sv_svmA2)
+```
+
+
+Jak widaæ na poway¿szym wykresie model `svmA`, czyli algorytm z domyœlnymi parametrami ca³kowicie ignoruje zmienn¹ `construction.year`. Model z dostrojonymi parametrami zachowuje siê ju¿ ca³kowicie inaczej. Widaæ pewne podobieñstwo do algorytmu lasów losowych, lecz model `svmAT` jest bardziej wyg³adzony i nie zawiera tak gwa³townych skoków.
+
+Wykresy dla `White_wine`.
+
+```{r eval=FALSE}
+# Wine
+
+sv_rfW  <- single_variable(explainer_rfW, variable =  "V3", type = "pdp")
+sv_svmW  <- single_variable(explainer_svmW, variable =  "V3", type = "pdp")
+sv_svmW2  <- single_variable(explainer_svmWT, variable =  "V3", type = "pdp")
+```
+
+
+```{r}
+plot(sv_rfW,sv_svmW,sv_svmW2)
+```
+
+
+Dla drugiego zbioru danych to niedostrojony `SVM` bardziej przypomina `randomForest`, ale algorytm z wybranymi parametrami nadal jest g³adszy i kszta³t odpowiadaj¹cej linii na wykresie przypomina parabole tak jak poprzednim przypadku. Mo¿liwe, ¿e taki kszta³t wskazuje na brak problemu z `overfittingiem`, który wi¹¿e siê ze zbyt du¿ym dopasowaniem do danych treningowych i mo¿e byæ powodem dla gorszych wyników algorytmu drzew losowych w przypadku zbioru `apartments`.
+
