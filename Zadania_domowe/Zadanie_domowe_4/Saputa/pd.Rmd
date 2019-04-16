@@ -1,0 +1,176 @@
+---
+title: "ML - PD4"
+author: "Karol Saputa"
+date: "`r format(Sys.time(), '%d - %m - %Y')`"
+output:
+  html_document:
+    df_print: paged
+    toc: true
+    toc_float: true
+    code_folding: hide
+    number_sections: true
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+knitr::opts_chunk$set(cache = TRUE, warning = FALSE)
+library(DALEX)
+library(OpenML)
+library(DataExplorer)
+library(parallelMap)
+parallelMap::parallelStartMulticore(2)
+results <- matrix(nrow = 3, ncol = 2)
+colnames(results) <- c("ACC_apartments", "ACC_abalone")
+rownames(results) <- c("baseline", "scaling", "tuning")
+```
+
+# SVM - wykorzystanie
+Zadanie ma na celu przedstawienie zastosowania SVM oraz możliwości jego modyfikacji.
+
+## Analizowane zbiory
+Wykorzystano dwa zbiory danych dla problemu klasyfikacji.
+### Apartments
+Zmienną celu jest dzielnica.
+```{r}
+ap <- DALEX::apartments_test
+head(ap)
+ind <- sample(x = 1:nrow(ap), size = round(0.7*nrow(ap)))
+ap_tr <- ap[ind, ]
+ap_tt <- ap[!(1:nrow(ap) %in% ind),]
+table(ap_tr$district)
+length(levels(ap_tr$district))
+```
+
+### Abalone
+Zmienną celu jest płeć.
+```{r}
+ab <- OpenML::getOMLDataSet(183)$data
+head(ab)
+table(ab$Sex)
+ind <- sample(x = 1:nrow(ab), size = round(0.7*nrow(ab)))
+ab_tr <- ab[ind, ]
+ab_tt <- ab[!(1:nrow(ab) %in% ind),]
+```
+
+
+## Dopasowanie modelu
+Utworzenie podstawowego modelu.
+### Apartments
+```{r}
+### ---------------------------------------------------------------
+# LEARNERS
+
+lrn_scF <- mlr::makeLearner("classif.svm", par.vals = list("scale" = FALSE))
+lrn_scT <- mlr::makeLearner("classif.svm", par.vals = list("scale" = TRUE))
+
+###------------------------------------------------------------------
+# APARTMENTS
+tsk_ap <- mlr::makeClassifTask("apartments", ap_tr, "district")
+train_ <- train(lrn_scF, tsk_ap)
+prediction <- predict(train_, newdata = ap_tt)
+results[1,1] <- performance(prediction, measures = acc)
+performance(prediction, measures = acc)
+train_ <- train(lrn_scT, tsk_ap)
+prediction <- predict(train_, newdata = ap_tt)
+results[2,1] <- performance(prediction, measures = acc)
+performance(prediction, measures = acc)
+```
+W pierwszym przypadku `lrn_scF` ustawiono parametr `scale` jako `FALSE`, zmiennne nie były standaryzowane. W przypadku standaryzacji uzyskano znacząco wyższy wynik.
+
+### Abalone
+```{r}
+###--------------------------------------------------------------------
+# ABALONE
+
+ab_tr <- mlr::createDummyFeatures(ab_tr, "Sex")
+ab_tt <- mlr::createDummyFeatures(ab_tt, "Sex")
+ab_tr <- drop_columns(ab_tr, c("Class_number_of_rings.26", "Class_number_of_rings.28"))
+ab_tt <- drop_columns(ab_tt, c("Class_number_of_rings.26", "Class_number_of_rings.28"))
+tsk <- mlr::makeClassifTask("abalone", ab_tr, "Sex")
+
+train_ <- train(lrn_scF, tsk)
+prediction <- predict(train_, newdata = ab_tt)
+results[1,2] <- performance(prediction, measures = acc)
+performance(prediction, measures = acc)
+
+train_ <- train(lrn_scT, tsk)
+prediction <- predict(train_, newdata = ab_tt)
+results[2,2] <- performance(prediction, measures = acc)
+performance(prediction, measures = acc)
+```
+W przypadku zbioru Abalone nie wystąpiła różnica.
+
+## Hiperparametry
+Poddano optymalizacji parametry modelu:
+
+* gammma - parametr funkcji jądra Gaussowskiego
+* cost - parametr kary modelu
+
+```{r}
+svm_params <- makeParamSet(
+  makeIntegerParam("gamma", lower = 1, upper = 10, trafo = function(x) exp(x)),
+  makeIntegerParam("cost", lower = 1, upper = 10, trafo = function(x) exp(x))
+)
+control <- makeTuneControlRandom()
+```
+
+### Apartments
+```{r}
+###-------------------------------------------------------------------------------
+# APRATMENTS - tuning
+
+tunedParams <- tuneParams(
+  learner = lrn_scT,
+  task = tsk_ap,
+  resampling = makeResampleInstance("CV", iters = 3, task = tsk_ap),
+  par.set = svm_params,
+  control = control
+)
+
+tuned_lrn <- setHyperPars(
+  learner = lrn_scF,
+  par.vals = tunedParams$x
+)
+
+tuned_train_ <- train(tuned_lrn, tsk_ap)
+prediction <- predict(tuned_train_, newdata = ap_tt)
+results[3,1] <- performance(prediction, measures = acc)
+performance(prediction, measures = acc)
+length(levels(ap_tt$district))
+
+```
+
+
+### Abalone
+```{r}
+### -----------------------------------
+##ABALONE - tuning
+
+tunedParams <- tuneParams(
+  learner = lrn_scF,
+  task = tsk,
+  resampling = makeResampleInstance("CV", iters = 3, task = tsk),
+  #resampling = makeFixedHoldoutInstance(ind, tune_ind, merged_size),
+  par.set = svm_params,
+  control = control
+)
+
+tuned_lrn <- setHyperPars(
+  learner = lrn_scF,
+  par.vals = tunedParams$x
+)
+
+tuned_train_ <- train(tuned_lrn, tsk)
+prediction <- predict(tuned_train_, newdata = ab_tt)
+results[3,2] <- performance(prediction, measures = acc)
+performance(prediction, measures = acc)
+```
+
+
+
+## Podsumowanie
+Skalowanie zmiennych może miec bardzo istotny wpływ na wynik (Apartments), tuning parametrów pozwala polepszyć wynik (o ile zakresy wartości parametrów są rozsądne, w przypadku Apartments nie udało się uzyskać po tuningu nawet wyników na poziomie baseline).
+```{r}
+results
+```
+
