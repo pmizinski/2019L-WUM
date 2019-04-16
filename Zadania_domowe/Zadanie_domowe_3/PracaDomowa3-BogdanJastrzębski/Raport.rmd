@@ -1,0 +1,93 @@
+---
+title: "PD3"
+author: "Bogdan Jastrzębski"
+date: "`r format(Sys.time(), '%d - %m - %Y')`"
+output:
+  html_document:
+    theme: spacelab
+    df_print: paged
+    toc: true
+    toc_float: true
+    code_folding: hide
+    number_sections: true
+---
+
+# Wstęp 
+
+Naszym zadaniem było "dodać przynajmniej trzy kolumny" i porównać performance przed i po.
+Wydaje mi się, że większość grupy zrozumiała polecenie w ten sposób, by zrobić summary wizyty
+w sklepie, a następnie dodać do każdego wiersza wizyty to samo summary.
+
+Jestem prawie pewien (sformułowanie grzecznościowe), że takie postępowanie nie ma sensu. Co więcej, ponieważ wiele osób tak podeszło do zadania, odczuwam potrzebę podparcia mojej tezy. Przede wszystkim nie ma to realnego zastosowania. Wyobraźmy sobie, że klasyfikator został wytrenowany na danych postaci: 
+
+```{r}
+knitr::kable(data.frame(TARGET = c(1,1,1,1,2),
+                        pierwotny_parametr1 = c(2,3,4,5,6),
+                        pierwotny_parametrN = c(23,32,23,32,24),
+                        summary1 = c("asdf", "asdf", "asdf", "asdf", "SDFf"),
+                        summary2 = c("ALA", "ALA", "ALA", "ALA", "MARYSIA"),
+                        VISITnumber_usuniete_z_datasetu = c(165,165,165,165,24)))
+```
+
+Powyżej przykład jednej wizyty (VISITnumber nie ma w końcowym zbiorze!). Posiadając jeden wiersz starego datasetu (bez kolumn summary), nie umiemy uzupełnić summary1 i summary2. Oczywiście, by przeprowadzić klasyfikację potrzeba wszystkich wierszy danej wizyty. Ale nie można ich trzymać w osobnych wierszach, bo klasyfikator rozpatruje obserwacje osobno przy klasyfikacji! Dane więc nie pasują do budowy klasyfikatorów. 
+
+Dane mają sens tylko zagregowane, ale to nie jedyny problem. Jak widać w powyższej tabeli, wszystkie wiersze o tym samym VISITnumber mają takie same wartości w kolumnach summary1 i summary2. Ale jeżeli ostatecznie trzy pierwsze wiersze trafią do zbioru treningowego, a czwarty do testowego, to czwarty zostanie bardzo łatwo zaklasyfikowany na podstawie summary1 i symmary2. No ale to tak, jakby trenować zbiór na wizycie nr 165 i testować na tej samej wizycie. Nic więc dziwnego, że Accuracy wzrasta... Taka klasyfikacja nie ma sensu, a w każdym razie ma się nijak do pierwotnego problemu. 
+
+Podjąłem się ostatecznie nieco innego zadania. Postanowiłem pogrupować dane po wizycie i podsumować. To oznacza, że mój końcowy dataset posiada tylko kolumny TARGET i różne summary. Co więcej nie zmieniałem encodingu zmiennych, bo zadanie ma wykazać zasadność robienia podsumowań, nie powinno się moim zdaniem stosować innych technik poprawiających wydajność.
+
+# Przygotowanie datasetu - feature extraction
+
+Wyekstrahowałem z datasetu następujące cechy (per VISIT):
+
+- dzień tygodnia - dla pewności moda z obserwacji
+
+- liczba kupionych produktów 
+
+- liczba unikalnych produktów
+
+- liczba działów, do których należały produkty
+
+- liczna zwróconych produktów
+
+- entropia - liczby produktów
+
+- główny dział - moda z działów, do których należały produkty
+
+Oto moje colnames:
+```{r}
+knitr::kable(data.frame(Colnames = c("TripType",
+  "Weekday",
+  "liczba_kupionych_produktow",
+  "liczba_unikalnych_produktow",
+  "liczba_departamentow",
+  "liczba_zwroconych",
+  "entropia",
+  "glowny_dzial")
+))
+```
+
+Prawdopodobnie dobór kolumn nie jest zbytnio trafiony, ale to tylko praca domowa.
+
+# Klasyfikacja 
+
+Wykorzystałem klasyfikator "Ranger".
+
+Oto performance dla datasetu oryginalnego:
+```{r}
+load("reg.rda")
+load("sup.rda")
+
+knitr::kable(data.frame(regularPerformance, superbPerformance) )
+```
+
+Wszystkie miary wskazały poprawienie klasyfikacji. To dobrze, jednak czy warto porównywać te wyniki, skoro kształty datasetów są tak odmienne?
+
+# Podsumowanie
+
+Dzięki zagregowaniu cech udało się znacznie poprawić performance klasyfikatora.
+W przyszłości można pomyśleć o lepszym zagregowaniu cech, większej liczbie zmiennych. 
+Możliwe, że zamiast mody z departamentu powinno zmienić encoding DepartmentDescription np. na 
+kolumny oznaczające liczbę produktów kupionych, pochodzących z danego departamentu (1 kolumna - 1 departament) etc. Obecny sposób podsumowywania datasetu traci bardzo dużo informacji.
+
+
+
