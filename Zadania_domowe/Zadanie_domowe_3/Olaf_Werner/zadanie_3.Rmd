@@ -1,0 +1,73 @@
+---
+title: "Zadanie Domowe 3"
+author: "Olaf Werner"
+date: "April 1, 2019"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, warning = FALSE)
+library(readr)
+library(DataExplorer)
+library(dplyr)
+library(mlr)
+set.seed(1)
+train <- read_csv("train.csv")
+```
+
+## Zbiór Danych
+
+Mój zbiór danych pochodzi z Walmartu. Zanim jednak zbudujemy model trzeba go będzie nieco oczyścić.
+
+```{r echo=TRUE}
+train<-filter(train,!is.na(FinelineNumber)) %>% select(-Upc)
+train[sapply(train, is.character)] <- lapply(train[sapply(train, is.character)],as.factor) 
+train$TripType<-factor(train$TripType)   
+```
+
+Usunołem kolumne Upc oznaczającą unikalny indentyfikator produktu oraz puste wiersze. Zamieniłem też odpowiednie kolumny na factory.
+
+## Modele
+
+Ponieważ zbiór danych to ponad pół miliona wierszy będe operował na małej jego części.
+
+```{r echo=TRUE}
+wizyty<-unique(train$VisitNumber)
+wizyty<-sample(wizyty,size = floor(length(wizyty)/100),replace = FALSE)
+train<-train[train$VisitNumber %in% wizyty,]
+```
+
+
+###Model bez inżynierii cech
+```{r echo=TRUE}
+model<-"classif.gbm"
+task = makeClassifTask(id = "task", data = train,"TripType" )
+learner<-makeLearner(model)
+cv <- makeResampleDesc("CV", iters = 5)
+r1 <- resample(learner, task, cv,measures = acc)
+```
+
+
+###Model z inżynierią cech
+```{r echo=TRUE}
+train %>% group_by(VisitNumber) %>% summarise(numberOfReturns=sum(ScanCount<0),
+                                                        diffrentDep=length(unique(DepartmentDescription)),
+                                                        diffrentProd=length(unique(FinelineNumber)))->temp
+
+train<-inner_join(train,temp,by="VisitNumber")
+task = makeClassifTask(id = "task", data = train,"TripType" )
+r2 <- resample(learner, task, cv,measures = acc)
+```
+Dodaliśmy kolumny określające liczbę zwrotów, liczbę różnych kategorii produktów oraz liczbę różnych produktów.
+
+##Porównanie
+
+```{r}
+kableExtra::kable(data.frame(Stary=r1$aggr,Nowy=r2$aggr),paddding=2,digits = 3)
+```
+
+
+Jak widzimy inżynieria cech dała lepsze rezultaty.
+
+
+

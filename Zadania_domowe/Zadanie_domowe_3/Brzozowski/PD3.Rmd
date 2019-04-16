@@ -1,0 +1,103 @@
+---
+title: "Feature Engineering - PD3"
+author: "Łukasz Brzozowski"
+date: "`r format(Sys.time(), '%d - %m - %Y')`"
+output:
+  html_document:
+    df_print: paged
+    toc: true
+    toc_float: true
+    code_folding: hide
+    number_sections: true
+theme: spacelab
+---
+  
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE, cache = TRUE)
+```
+
+#Przygotowanie danych
+
+Otrzymane dane wymagają najpierw odpowiedniego przygotowania. Choć za wyjściowe dane posłuży nam ramka przygotowana podczas wykładu w sekcji *During classes*, warto najpierw sprawdzić, do jakich danych mamy dostęp z poziomu pliku `train.csv`
+
+```{r}
+head(dat, 1)
+summarizeColumns(dat)
+```
+
+A teraz spójrzmy na ramkę, do której będziemy dodawać kolumny:
+
+```{r}
+head(newDat, 3)
+```
+
+W ramce tej znajduje się informacja, jaki rodzaj zakupów został dokonany, ile unikalnych produktów zostało kupionych oraz jakiego dnia odbywały się zakupy. 
+
+```{r}
+summarizeColumns(newDat)
+```
+
+Do przewidywania danych będziemy korzystali z modelu `classif.ranger` z pakietu `mlr`. Do oceny wyników będziemy używać miary `accuracy` policzonej na pięciokrotnej kroswalidacji. Sprawdźmy skuteczność klasyfikacji przy kroswalidacji wyjściowego zbioru danych:
+
+```{r}
+r
+```
+
+Choć 27% skuteczności może nie budzić wrażenia, pamiętajmy, że przewidywanych klas jest aż 40, zatem nadal model zbudowany na kolumnach `Weekday` i `count` charakteryzuje się dziesięciokrotnie lepszą skutecznością niż losowy dobór klas. 
+# Dodawanie nowych kolumn
+## Główny dział
+Intuicyjnie rodzaj zakupów powinien mieć związek z działem, z którego pochodzą produkty. Dodajmy zatem do naszej ramki danych informację, z którego działu pochodzi najwięcej kupionych podczas jednej wizyty produktów.
+
+```{r}
+head(newDat2)
+```
+
+Ponownie policzmy skuteczność modelu na nowej ramce:
+
+```{r}
+r1
+```
+
+Jak widzimy, skuteczność wzrosła prawie dwukrotnie, zatem dział musi mieć duże znaczenie dla kategorii `TripType`.
+
+## Zwroty produktów
+
+Warto zwrócić uwagę, że podczas niektórych wizyt w sklepie klienci zwracali zakupione produkty. Być może zakupy, podczas których klienci zwracali produkty, należą do innych kategorii. Dodamy zatem znacznik mówiący, czy podczas danych zakupów został zwrócony produkt.
+```{r}
+head(newDat3)
+```
+
+```{r}
+r2
+```
+Choć skuteczność nie wzrosła już tak znacznie, widzimy, że zwroty produktów musiały mieć wpływ na rodzaj zakupów.
+
+## Sumaryczna liczba produktów
+
+Skoro liczba unikalnych produktów ma znaczenie dla modelu, być może sumaryczna liczba oddanych i zwróconych produktów także poprawi jego skuteczność. Dodajmy kolumnę, w której znajdzie się suma kupionych produktów:
+
+```{r}
+head(newDat4)
+```
+
+```{r}
+r3
+```
+
+Choć nieznacznie, skuteczność modelu ponownie wzrosła. Ostatecznie po dodaniu trzech kolumn uzyskaliśmy zatem ponad dwukrotnie lepszy model niż wejściowy.
+
+#Porównanie błędu logarytmicznego
+
+Na koniec możemy porównać wyniki modeli poprzez obliczenie logarytmicznej straty, czyli miary błędu używanej podczas trwania konkursu.
+
+Początkowy błąd modelu:
+```{r}
+err1
+```
+
+Końcowy błąd modelu:
+```{r}
+err2
+```
+
+Możemy zaobserwować zatem znaczny spadek obliczanego błędu.
