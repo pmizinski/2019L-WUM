@@ -1,0 +1,283 @@
+---
+title: "PD4"
+author: "Dominik Rafacz"
+date: "`r format(Sys.time(), '%d - %m - %Y')`"
+output:
+  html_document:
+    theme: simplex
+    df_print: paged
+    toc: true
+    toc_float: true
+    code_folding: hide
+    number_sections: true
+---
+
+# Wstęp
+Będziemy badać metodę svm (zaimplementowaną w pakiecie *e1071*) na zbiorach *apartments* z pakietu *DALEX*, na którym będziemy dokonywać regresji, oraz na zbiorze *bodyfat* z bazy zbiorów *OpenML*, na której będziemy dokonywać klasyfikacji.
+
+```{r setup, include = FALSE}
+library(mlr)
+library(mlrMBO)
+library(OpenML)
+library(DALEX)
+library(ggplot2)
+library(parallelMap)
+```
+
+```{r preparation, message=FALSE}
+bodyfat <- getOMLDataSet(data.name = "bodyfat")
+bodyfat <- bodyfat$data
+
+len1 <- nrow(apartments)
+len2 <- nrow(bodyfat)
+
+trainind1 <- sample(len1, ceiling(len1*6/10))
+testind1 <- setdiff(1:len1, trainind1)
+len1tr <- length(trainind1)
+len1ts <- length(testind1)
+
+trainind2 <- sample(len2, ceiling(len2*6/10))
+testind2 <- setdiff(1:len2, trainind2)
+len2tr <- length(trainind2)
+len2ts <- length(testind2)
+```
+
+# Dopasowanie modeli
+
+Na początek po prostu dopasujemy modele do danych. Zrobimy to z wykorzystaniem frameworka *mlr*.
+
+```{r models, cache = TRUE}
+task1 <- makeRegrTask("regr_apartments", data = apartments[trainind1,], target = "m2.price")
+task2 <- makeClassifTask("classif_cosinnegos", data = bodyfat[trainind2,], target = "binaryClass")
+
+lrn1 <- makeLearner("regr.svm", par.vals = list(scale = FALSE))
+lrn2 <- makeLearner("classif.svm", predict.type = "prob", par.vals = list(scale = FALSE))
+
+model1 <- train(lrn1, task1)
+model2 <- train(lrn2, task2)
+
+out1 <- predict(model1, newdata = apartments[testind1,])
+out2 <- predict(model2, newdata = bodyfat[testind2,])
+```
+Wyniki regresji na *apartments*:
+```{r apart}
+performance(out1, measures = list(mlr::rmse, mlr::rae, mlr::rsq))
+```
+Wyniki klasyfikacji na *bodyfat*:
+```{r body}
+performance(out2, measures = list(mlr::acc, mlr::auc, mlr::f1))
+```
+
+Jak możemy zobaczyć, wyniki dopasowania nie są powalające. Wręcz przeciwnie - przy klasyfikacji nasz model działa gorzej, niż gdyby zgadywał. W dalszej części będziemy starali się je poprawić. Najpierw jednak zobaczmy, jak wygląda maszyna dla zadania klasyfikacji na wykresie (patrzymy na obszary klasyfikacji w dwóch wymiarach - Density i Weight, dla reszty wymiarów biorąc wartości średnie ze zbioru treninigowego):
+
+```{r plotsvm, fig.width=10, fig.height=7, fig.align="center"}
+min(bodyfat[trainind2, c("Density")]) -> dmin
+max(bodyfat[trainind2, c("Density")]) -> dmax
+min(bodyfat[trainind2, c("Weight")]) -> wmin
+max(bodyfat[trainind2, c("Weight")]) -> wmax
+expand.grid(seq(dmin, dmax, length.out = 100), seq(wmin, wmax, length.out = 100)) -> denwei
+colMeans(bodyfat[trainind2,-15]) -> means
+matrix(rep(means,10000), ncol = 14, byrow = TRUE) -> rest
+rest[,1] <- denwei[,1]
+rest[,3] <- denwei[,2]
+colnames(rest) <- colnames(bodyfat)[1:14]
+predsgrid1 <- predict(model2, newdata = as.data.frame(rest))
+
+ggplot(data = cbind(Response = predsgrid1$data$response, as.data.frame(rest)), aes(x=Density, y=Weight, color = Response)) +
+  geom_point() +
+  theme_bw() +
+  geom_point(data = bodyfat[trainind2, ], aes(x=Density,y=Weight,shape=binaryClass), color = "black") +
+  ggtitle("Klasyfikacja svm") +
+  labs(shape = "Target")
+
+```
+
+Jak widzimy, maszyna klasyfikuje prawie wszystkie punkty danych jako "N", natomiast obszar, w którym punkty oznaczałaby jako "P" jest bardzo wąski względem wymiaru Weight - wynika to z faktu, że wymiar ten posiada zupełnie inną skalę niż wymiar Density (różnica dwóch rzędów wielkości), podczas gdy wektory we wszyskich kierunkach mają podobne długości.
+
+# Skalowanie
+
+Sprawdzimy teraz, jak poprawi się skuteczność modeli po przeskalowaniu danych. Stworzymy teraz dwa dodatkowe modele, w których przeskalujemy kolumny.
+
+```{r scaling, cache = TRUE}
+
+lrn1s <- makeLearner("regr.svm", par.vals = list(scale = TRUE))
+lrn2s <- makeLearner("classif.svm", predict.type = "prob", par.vals = list(scale = TRUE))
+
+model1s <- train(lrn1s, task1)
+model2s <- train(lrn2s, task2)
+
+out1s <- predict(model1s, newdata = apartments[testind1,])
+out2s <- predict(model2s, newdata = bodyfat[testind2,])
+
+cat("Wyniki regresji na apartments (ze skalowaniem): \n")
+performance(out1s, measures = list(mlr::rmse, mlr::rae, mlr::rsq))
+cat("\nWyniki klasyfikacji na bodyfat (ze skalowaniem): \n")
+performance(out2s, measures = list(mlr::acc, mlr::auc, mlr::f1))
+
+
+
+```
+
+Widzimy zdecydowaną poprawę - bez skalowania modele były użyteczne w niewielkim stopniu, natomiast po przeskalowaniu mają już bardzo dobrą skuteczność. Zobaczmy jeszcze wykres dla tych samych dwóch wymiarów, co poprzednio:
+
+```{r svm2, fig.align="center", fig.width=10, fig.height=7}
+
+predsgrid2 <- predict(model2s, newdata = as.data.frame(rest))
+
+ggplot(data = cbind(Response = predsgrid2$data$response, as.data.frame(rest)), aes(x=Density, y=Weight, color = Response)) +
+  geom_point() +
+  geom_point(data = bodyfat[trainind2, ], aes(x=Density,y=Weight,shape=binaryClass), color = "black") +
+  theme_bw() +
+  ggtitle("Klasyfikacja svm po przeskalowaniu") +
+  labs(shape = "Target")
+
+```
+
+Wniosek: skalowanie svm jest przydatne.
+
+# Hiperparametry
+
+Teraz spróbujemy dostroić hiperparametry do obu modeli. Skorzystamy do tego celu z metod optymalizacji udostępnianych przez pakiet *mlrMBO*. Pozwala on na utworzenie nowego typu obiektu, jaki możemy przekazać do funkcji *tuneParams()* z pakietu *mlr* - *TuneControlMBO*. Hiperparametry będą dobierane poprzez zewnętrzny model. 
+Aby przyspieszyć obliczenia, będziemy korzystać z wielowątkowości.
+
+```{r tuning, echo=FALSE, message=FALSE, cache = TRUE}
+parset <- makeParamSet(
+  makeDiscreteParam("kernel", values = c("radial", "polynomial", "linear")),
+  makeNumericParam("cost", -15, 15, trafo = function(x) 2^x),
+  makeNumericParam("gamma", -15, 15, trafo = function(x) 2^x, requires = quote(kernel == "radial")),
+  makeIntegerParam("degree", lower = 1, upper = 4, requires = quote(kernel == "polynomial"))
+)
+
+configureMlr(on.learner.warning = "quiet", show.learner.output = FALSE)
+
+control <- makeMBOControl()
+control <- setMBOControlTermination(control, iters = 50, max.evals = 100)
+control <- setMBOControlInfill(control, crit = crit.ei)
+control <- setMBOControlMultiPoint(control, method = "cl", cl.lie = min)
+tunecontrol <- makeTuneControlMBO(mbo.control = control)
+
+parallelStartSocket(cpus = 4, level = "mlr.tuneParams")
+
+parres1 <- tuneParams(
+  makeLearner("regr.svm"),
+  task1, cv3, par.set = c(parset, list(scale = TRUE)), 
+  control = tunecontrol,
+  measures = list(mlr::rmse, mlr::rae, mlr::rsq),
+  show.info = FALSE)
+
+parres2 <- tuneParams(
+  makeLearner("classif.svm", predict.type = "prob"),
+  task2, cv3, par.set = c(parset, list(scale = TRUE)), 
+  control = tunecontrol,
+  measures = list(mlr::acc, mlr::auc, mlr::f1),
+  show.info = FALSE)
+
+parallelStop()
+```
+
+```{r tuneresult, cache = TRUE}
+lrn1t <- makeLearner("regr.svm", par.vals = c(list(scale = TRUE), parres1$x))
+lrn2t <- makeLearner("classif.svm", predict.type = "prob", par.vals = c(list(scale = TRUE), parres2$x))
+
+model1t <- train(lrn1t, task1)
+model2t <- train(lrn2t, task2)
+
+out1t <- predict(model1t, newdata = apartments[testind1,])
+out2t <- predict(model2t, newdata = bodyfat[testind2,])
+```
+
+Wyniki crossvalidacji dla regresji:
+```{r}
+parres1
+```
+
+Wyniki na zbiorze testowym:
+```{r}
+performance(out1t, measures = list(mlr::rmse, mlr::rae, mlr::rsq))
+```
+
+Wyniki crossvalidacji dla klasyfikacji:
+```{r}
+parres2
+```
+
+Wyniki na zbiorze testowym: 
+```{r}
+performance(out2t, measures = list(mlr::acc, mlr::auc, mlr::f1))
+```
+
+# Analiza zależności od zmiennych
+
+Na koniec przyjrzymy się wykresom, generowanym za pomocą pakietu *DALEX*, pozwalającym zrozumieć nam zachowanie modeli. 
+
+Na wszystkich wykresach "before" oznacza model przed dostrojeniem hiperparametrów, "after" - po dostrojeniu, a "compare" - model lasu losowego, dla porównania.
+
+Najpierw wykresy dla regresji.
+```{r jedzie_pociag_z_dalexa1, fig.width=10, fig.height=7, fig.align="center", cache = TRUE}
+lrn1c <- makeLearner("regr.ranger")
+model1c <- train(lrn1c, task1)
+out1c <- predict(model1c, newdata = apartments[testind1,])
+
+custom_predict1 <- function(object, newdata) {pred <- predict(object, newdata=newdata)
+                                              response <- pred$data$response
+                                              return(response)}
+expl1bef <- explain(model1s, data=apartments[testind1,], 
+                    y=apartments[testind1,"m2.price"], predict_function = custom_predict1, label="before")
+expl1aft <- explain(model1t, data=apartments[testind1,], 
+                    y=apartments[testind1,"m2.price"], predict_function = custom_predict1, label="after")
+expl1com <- explain(model1c, data=apartments[testind1,], 
+                    y=apartments[testind1,"m2.price"], predict_function = custom_predict1, label="compare")
+
+
+mp1bef <- model_performance(expl1bef)
+mp1aft <- model_performance(expl1aft)
+mp1com <- model_performance(expl1com)
+
+pdp1bef  <- variable_response(expl1bef, variable =  "construction.year", type = "pdp")
+pdp1aft  <- variable_response(expl1aft, variable =  "construction.year", type = "pdp")
+pdp1com  <- variable_response(expl1com, variable =  "construction.year", type = "pdp")
+
+plot(mp1bef, mp1aft, mp1com)
+plot(pdp1bef, pdp1aft, pdp1com)
+
+```
+
+Pierwszy wykres pokazuje rozkład wartości bezwzględnej błędów predykcji. Widać wyraźnie, że po dostrojeniu hiperparametrów reszty w pewnym stopniu zmalały.
+
+Drugi wykres prezentuje reakcję modeli na poszczególne wartości zmiennej "construction.year". Jak widać, model dostrojony reaguje silniej niż niedostrojony. Oba jednak prezentują zależność wielomianową, podczas gdy model drzewiasty jest raczej skokowy.
+
+```{r jedzie_pociag_z_dalexa2, fig.width=10, fig.height=7, fig.align="center", cache = TRUE}
+lrn2c <- makeLearner("classif.ranger", predict.type = "prob")
+model2c <- train(lrn2c, task2)
+out2c <- predict(model2c, newdata = bodyfat[testind2,])
+
+custom_predict2 <- function(object, newdata) {pred <- predict(object, newdata=newdata)
+                                              response <- pred$data[,3]
+                                              return(response)}
+
+y2 <- as.numeric(bodyfat[testind2,"binaryClass"]) -1
+
+expl2bef <- explain(model2s, data=bodyfat[testind2,], 
+                    y=y2, predict_function = custom_predict2, label="before")
+expl2aft <- explain(model2t, data=bodyfat[testind2,], 
+                    y=y2, predict_function = custom_predict2, label="after")
+expl2com <- explain(model2c, data=bodyfat[testind2,], 
+                    y=y2, predict_function = custom_predict2, label="compare")
+
+
+mp2bef <- model_performance(expl2bef)
+mp2aft <- model_performance(expl2aft)
+mp2com <- model_performance(expl2com)
+
+pdp2bef  <- variable_response(expl2bef, variable =  "Weight", type = "pdp")
+pdp2aft  <- variable_response(expl2aft, variable =  "Weight", type = "pdp")
+pdp2com  <- variable_response(expl2com, variable =  "Weight", type = "pdp")
+
+plot(mp2bef, mp2aft, mp2com)
+plot(pdp2bef, pdp2aft, pdp2com)
+
+```
+
+Ponownie, pierwszy wykres dla klasyfikatorów prezentuje rozkład reszt (błędem jest tu dla nas prawdopodobieństwo przeciwnej klasy). Ponownie, dostrojony model ma mniejsze błędy.
+
+Drugi wykres pokazuje, że po dobraniu hiperparametrów, model przestał zwracać tak dużą uwagę na zmienną Weight, podobnie jak model drzewiasty.
