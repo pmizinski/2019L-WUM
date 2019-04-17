@@ -1,0 +1,7 @@
+- podzial zbioru na testowy i treningowy. i dzialamy na treningowym
+- wyrzzucic decile_score i po is_recid oraz compas_screening_dat i 63,69
+  https://github.com/pseshadri18/compas-recidivism/blob/master/compas_report.Rmd
+- powiazac zmienne, parowanie -> stworzyc wlasne, nowe zmiennne
+- wykresy mozaikowe
+- is_recid sobie przewidujemy <- nasz cel
+- 

@@ -1,0 +1,110 @@
+---
+title: "Praca Domowa 3"
+author: "Aleksandra Wichrowska"
+date: "2 kwietnia 2019"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE, cache = TRUE)
+```
+
+
+```{r}
+load("data.RData")
+library(dplyr)
+library(mlr)
+```
+
+
+# Dane
+
+Dane, na których pracujemy pochodzą z bazy danych Walmart.
+
+Po wczytaniu pliku `train.csv` sprawdźmy, jakie kolumny ma prezentowana ramka danych:
+
+```{r}
+colnames(train)
+```
+
+Na początku przekształcamy `train` zgodnie z kodem z wykładu "during classes":
+
+
+```{r, echo=TRUE}
+data2 <- data %>%
+  group_by(VisitNumber) %>%
+  summarise(TripType = head(TripType,1),
+  count = n(),
+  day = unique(Weekday)[1])
+```
+
+```{r, echo=TRUE}
+head(data2)
+```
+
+Teraz dla każdego VisitNumber mamy informacje o liczbie zakupionych różnych produktów oraz o dniu zakupów.
+
+Sprawdźmy skuteczność klasyfikacji (accuracy) dla tak przygotowanego zbioru danych. Wykorzystamy do tego model `classif.ranger`
+
+
+Otrzymana wartość accuracy:
+```{r, echo = TRUE}
+acc2
+```
+
+# Dodawanie nowych kolumn
+
+
+## Dział z największą liczbą zakupionych produktów
+
+
+```{r}
+head(data3)
+```
+
+Otrzymana wartość accuracy:
+
+```{r}
+acc3
+```
+
+Skuteczność wzrosła.
+
+## Liczba zakupionych produktów w sumie
+
+
+```{r}
+head(data4)
+```
+
+Otrzymana wartość accuracy:
+
+```{r}
+acc4
+```
+
+## Liczba zwrotów
+
+```{r}
+head(data5)
+```
+
+Otrzymana wartość accuracy:
+
+```{r}
+acc5
+```
+
+
+# Porównanie błędów za pomocą miary z konkursu
+
+Kolejne błędy modelu:
+```{r}
+error2
+error3
+error4
+error5
+error6
+```
+
+Jak widać miara błędu jest coraz niższa, a więc przeprowadzony feature engineering przyniósł zamierzony skutek.
