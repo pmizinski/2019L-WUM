@@ -1,0 +1,221 @@
+---
+title: "PD4"
+author: "Bogdan Jastrzębski"
+date: "`r format(Sys.time(), '%d - %m - %Y')`"
+output:
+  html_document:
+    theme: simplex
+    df_print: paged
+    toc: true
+    toc_float: true
+    code_folding: hide
+    number_sections: true
+---
+
+# Wstęp
+
+W niniejszej pracy zbadamy działanie algorytmu SVM z jądrem gausowskim. 
+Omówimy wpływ normalizacji danych, a także wpływ parametrów.
+
+Będziemy używać zbiorów "wine_quality" i "apartments".
+
+# Pierwsze dopasowanie i opis parametrów
+
+SVM to właściwie klasa algorytmów machine-learningowych, które łączy podejście "widest street". SVM pozwala na podmianę kerneli, przez co 
+modele SVM de facto ostatecznie działają bardzo różnie. W tej pracy 
+zajęliśmy się kernelem gausowskim, którego funkcja kernelowa przedstawia
+się w następujący sposób:
+
+$$ k(x,y) = e^{-\gamma ||x-y||^2}, \gamma>0$$
+
+gdzie $\gamma$ jest parametrem.
+W bardzo dużym uproszczeniu można przyjąć,
+że $\gamma$ to parametr złożoności - im większa, 
+tym model jest bardziej "complex". 
+
+Oto wyniki wstępnej klasyfikacji na zbiorze apartments wraz z porównaniem z randomForest:
+
+| Miara | SVM | RandomForest |
+|---------|-----|---|
+| mse | 833341.9559287 | 89991.6855904 |
+| rmse | 912.8756520 | 299.9861423 |
+| mae | 704.2683224 | 225.9161006 |
+| rsq | 0.0217060 | 0.8910439 |
+
+na zbiorze wine_quality:
+
+| Miara | SVM | RandomForest |
+|---------|-----|---|
+| mse | 0.4855166 | 0.3389284 |
+| rmse | 0.6967902 | 0.5821756 |
+| mae | 0.5193204 | 0.4282097 |
+| rsq | 0.2572526 | 0.4773139 |
+
+Jak widać wyniki random forest są znacząco lepsze w obydwu 
+przypadkach.
+
+Spróbujemy przebić RandomForest normalizując dane, a także 
+dostosowując prawidłowo parametr $\gamma$.
+
+# Normalizacja
+
+Wg. tego opracowania: http://pyml.sourceforge.net/doc/howto.pdf,
+normalizacja danych ma znaczenie dla SVM. Znormalizujmy dane i zobaczmy, 
+czy to prawda.
+
+Apartments:
+
+| Miara | SVM | SVM po normalizacji |
+|---------|-----|---|
+| mse | 833341.9559287 | 786986.3018805 |
+| rmse | 912.8756520 | 887.1224841 |
+| mae | 704.2683224 | 681.6014224 |
+| rsq | 0.0217060 | 0.0410073 |
+
+Wine_quality:
+
+| Miara | SVM |  SVM po normalizacji |
+|---------|-----|---|
+| mse | 0.4855166 | 0.3918088 |
+| rmse | 0.6967902 | 0.6259463 |
+| mae | 0.5193204 | 0.4598560 |
+| rsq | 0.2572526 | 0.3963673 |
+
+Wyniki są zdecydowanie lepsze. Zdaje się classif.svm dokonuje normalizacji
+defaultowo, nic dziwnego.
+
+# Tuning parametu $\gamma$
+
+Metodą random search spróbujemy znaleźć dobry parametr $\gamma$.
+
+Zaproponowane parametry dla zbiorów apartments i wine_quality to kolejno
+gamma=0.0451 i gamma=0.204, a wyniki przedstawiają się następująco:
+
+Apartments:
+
+| Miara | SVM | SVM po normalizacji i tuningu | 
+|---------|-----|---|
+| mse | 833341.9559287 | 26424.6979436 |
+| rmse | 912.8756520 | 162.5567530 |
+| mae | 704.2683224 | 126.9778145 |
+| rsq | 0.0217060 | 0.9669210 |
+
+Wine_quality:
+
+| Miara | SVM |  SVM po normalizacji i tuningu |
+|---------|-----|---|
+| mse | 0.4855166 | 0.3865521 |
+| rmse | 0.6967902 | 0.6217332 |
+| mae | 0.5193204 | 0.4508506 |
+| rsq | 0.2572526 | 0.4049754 |
+
+Zmiany są, by nie przebierać w słowach, dramatyczne, choć przy wine_quality nie udało się pobić randomForest.
+
+# Dalex: Explain! 
+
+A teraz pokażemy jak utworzone wyżej modele zachowują się od wewnątrz.
+
+Na początku zbiór Apartments:
+
+```{r}
+load("plots3.rda")
+plot_ap_perfor
+```
+
+Oto jak przedstawia się wykres rezyduów. Nasz tuned_svm ma znakomitą 
+dokładność. 
+
+Przyjrzyjmy się najważniejszym zmiennym:
+
+Surface:
+
+```{r}
+load("plots.rda")
+plot_surface
+```
+
+Zarówno randomForest, jak i tuned_svm skorzystały z tej zmiennej,
+podczas gdy podstawowy svm jest
+
+Floor:
+
+```{r}
+plot_floor
+```
+
+Taka sama sytuacja jak wyżej. 
+
+Counstruction year
+```{r}
+plot_con.year
+```
+
+Właśnie na tym wykresie dobrze widać, że nastawione $\gamma$ 
+pozwala na umiarkowaną złożoność. Tutaj lepszym dopasowaniem jest 
+krzywa podobna do randomForest, jednak tuned_svm proponuje zależność
+kwadratową. Okazuje się, że jest wystarczająca.
+
+Number of rooms:
+```{r}
+plot_no.rooms
+```
+Tutaj ponownie, default_svm nie wyłapał zależności, tuned zaproponował kwadratową, a randomForest jeszcze inną.  
+
+A teraz wine_quality:
+
+```{r}
+plot_ab_perfor
+```
+
+Tu ponownie tuned_svm dobry, jednak nie lepszy od randomForest.
+
+Najważniejsze zmienne:
+
+Alcohol:
+```{r}
+load("plots_wine.rda")
+plot_alcohol
+```
+
+RandomForest bardzo nieregularny, tuned i default podobnie
+złożone.
+
+Sulphates
+```{r}
+plot_sulphates
+```
+
+Tutaj widać działanie dostosowania parametru. Krzywa tuned_svm
+i randomForest zbliżone. 
+
+Total sulfur dioxide:
+```{r}
+plot_total.sulfur.dioxide
+```
+
+Tym razem podstawowy svm charakteryzuje się dużą zmiennością,
+podczas gdy tuned i randomForest umiarkowaną.
+
+
+Volatile acidity:
+```{r}
+plot_volatile.acidity
+```
+
+Podobnie jak zmienne wyżej.
+
+pH:
+```{r}
+plot_pH
+```
+
+Podobnie jak zmienne wyżej.
+
+# Podsumowanie
+
+Ustaliliśmy, że normalizacja zmiennych przed dopasowaniem do SVM jest bardzo wskazana. Ponadto oczywiście parametry początkowe klasyfikacji, 
+w tym przypadku $\gamma$ są ważne i warto znaleźć dla danego zbioru danych najlepsze, zapewne korzystając z wachlarza dostępnych funkcji,
+szukających optymalnych parametrów (zapewne nie z random search, a czegoś
+lepszego).
+
+

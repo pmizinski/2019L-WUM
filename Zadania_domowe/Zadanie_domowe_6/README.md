@@ -1,3 +1,3 @@
 # Zadanie domowe 6
 
-Termin oddania: 9 IV 2019 r.
+Termin oddania: 14 V 2019 r.
