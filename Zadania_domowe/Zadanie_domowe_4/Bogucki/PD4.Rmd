@@ -1,0 +1,196 @@
+---
+title: "PD4"
+author: "Wojciech Bogucki"
+date: "15 kwietnia 2019"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(dplyr)
+library(DALEX)
+library(OpenML)
+library(mlr)
+library(mlrMBO)
+stock <- getOMLDataSet(data.id = 841L)$data
+telescope <- getOMLDataSet(data.id = 1120L)$data
+telescope_train <- sample_frac(telescope, 0.6)
+telescope_test <- setdiff(telescope, telescope_train)
+```
+
+# Dopasowanie modeli
+Na początku tworzę model SVM dla zbioru apartments z pakietu DALEX. Jako target wybrałem zmienną określającą cenę za $m^2$.
+```{r model1}
+task <- makeRegrTask(id="apartments", data=apartments, target = "m2.price")
+lrn <- makeLearner("regr.svm")
+trn <- train(lrn, task)
+prd <- predict(trn, newdata = apartmentsTest)
+
+(perf <- performance(prd, list(rmse, mae, rsq)))
+```
+
+Jak drugi zbiór wybrałem [stock](https://www.openml.org/d/841) ze strony OpenML. W tym przypadku jest to klasyfikacja binarna, a targetem jest kolumna binaryClass. Ze względu na niewielką ilość danych używam tutaj kroswalidacji.
+```{r model2}
+task2 <- makeClassifTask(id="stock", data=stock, target = "binaryClass")
+lrn2 <- makeLearner("classif.svm", predict.type = "prob")
+
+cv <- makeResampleDesc("CV", iters = 5)
+r <- resample(lrn2, task2, cv, measures = list(acc, auc, tnr, tpr, ppv,f1),show.info = FALSE)
+(perf2 <- r$aggr)
+```
+
+# Skalowanie
+W mlr parametr scale w SVM jest domyślnie ustawiony na TRUE, więc teraz zrobię powyższe modele z tym parametrem ustawionym na FALSE.
+```{r model1 noscale}
+lrn_noscale <- makeLearner("regr.svm", par.vals = list(scale=FALSE))
+
+trn_noscale <- train(lrn_noscale, task)
+prd_noscale <- predict(trn_noscale, newdata = apartmentsTest)
+
+perf_noscale <- performance(prd_noscale, list(rmse,mae, rsq))
+
+knitr::kable(rbind('bez skalowania'=perf_noscale, 'ze skalowaniem'=perf))
+```
+
+Jak widać w tabeli brak skalowania w tym przypadku skutkuje dużo gorszym modelem
+
+
+```{r model2 noscale}
+lrn2_noscale <- makeLearner("classif.svm", predict.type = "prob", par.vals = list(scale=FALSE))
+
+r2 <- resample(lrn2_noscale, task2, cv,  measures = list(acc, auc, tnr, tpr, ppv,f1),show.info = FALSE)
+perf2_noscale <- r2$aggr
+
+knitr::kable(rbind('bez skalowania'=perf2_noscale, 'ze skalowaniem'=perf2))
+```
+
+Dla zbioru stock wyniki bez skalowania okazały się niewiele lepsze. Może to wynikać z małej ilości danych oraz faktu, że wszystkie zmienne w tym zbiorze są z podobnego przedziału.
+
+Postanowiłem więc sprawdzić jeszcze wpływ skalowania na zbiór [MagicTelescope](https://www.openml.org/d/1120), gdzie zmienne mają różne zakresy oraz danych jest więcej.
+```{r model3, cache=TRUE}
+task3 <- makeClassifTask(id="telescope", data=telescope_train, target="class.")
+lrn3 <- makeLearner("classif.svm", predict.type = "prob")
+
+trn3 <- train(learner = lrn3, task = task3)
+prd3 <- predict(trn3, newdata = telescope_test)
+perf3 <- performance(prd3, list(acc,auc,tnr, tpr, ppv))
+
+lrn3_noscale <- makeLearner("classif.svm", predict.type = "prob", par.vals = list(scale=FALSE))
+
+trn3_noscale <- train(learner = lrn3_noscale, task = task3)
+prd3_noscale <- predict(trn3_noscale, newdata = telescope_test)
+perf3_noscale <- performance(prd3_noscale, list(acc,auc,tnr, tpr, ppv))
+knitr::kable(rbind('bez skalowania'=perf3_noscale, 'ze skalowaniem'=perf3))
+```
+
+Jak się okazało, bez skalowania SVM klasyfikuje wszystkie obserwacje jako pozytywne, więc jest bardzo słabym modelem.
+
+Podsumowując, skalowanie może bardzo poprawić wynik modelu, ale zdarzają się przypadki, że może pogorszyć wynik.
+
+# Ustalanie hiperparametrów
+Następnie optymalizuję hiperparametry modeli dla zbiorów apartments i MagicTelescope metodami random search oraz MBO(optymalizacja bayesowska). Do optymalizacji wybrałem parametry kernel, cost i gamma. Sprawdzam dwa jądra: liniowe i gaussowskie.
+```{r svm_pars}
+svm_params <- makeParamSet(
+  makeDiscreteParam("kernel", c("linear", "radial")),
+  makeNumericParam("cost", lower = 0, upper = 7, default = 1),
+  makeNumericParam("gamma",lower = 0, upper = 7, requires = quote(kernel != "linear"))
+)
+```
+
+Na początku wyniki z funkcji tuneParams dla modelu apartments:
+```{r hiperpar1, cache=TRUE}
+(svm_tune <- tuneParams(
+  learner = lrn,
+  task = task,
+  resampling = cv3,
+  measures = list(rmse, mae,rsq),
+  par.set = svm_params,
+  control = makeTuneControlRandom(maxit = 50),show.info = FALSE
+    
+))
+(svm_tune_mbo <- tuneParams(
+  learner = lrn,
+  task = task,
+  resampling = cv3,
+  measures = list(rmse, mae,rsq),
+  par.set = svm_params,
+  control = makeTuneControlMBO(mbo.control = setMBOControlTermination(makeMBOControl(), max.evals = 50)),
+  show.info = FALSE
+  ))
+```
+TuneParams dla MagicTelescope, gdzie ze względu na wielkość danych wziąłem tylko podzbiór i użyłem zwykłej kroswalidacji:
+
+```{r hiperpar2, cache=TRUE}
+
+telescope_valid <- sample(1:nrow(telescope_train),size = floor(0.2*nrow(telescope_train)))
+
+(svm_tune2 <- tuneParams(
+  learner = lrn3,
+  task = subsetTask(task3,telescope_valid),
+  resampling = cv,
+  measures = list(acc, auc),
+  par.set = svm_params,
+  control = makeTuneControlRandom(maxit = 20),
+  show.info = FALSE
+))
+
+
+
+
+(svm_tune_mbo2 <- tuneParams(
+  learner = lrn3,
+  task = subsetTask(task3,telescope_valid),
+  resampling = cv,
+  measures = list(acc, auc),
+  par.set = svm_params,
+  control = makeTuneControlMBO(mbo.control = setMBOControlTermination(makeMBOControl(), max.evals = 20)),
+  show.info = FALSE
+))
+```
+
+A tu wyniki na zbiorze testowym
+
+```{r tuned test}
+lrn_tuned <- makeLearner("regr.svm", par.vals = svm_tune$x)
+
+trn_tuned <- train(learner = lrn_tuned, task = task)
+prd_tuned <- predict(trn_tuned, newdata = apartmentsTest)
+perf_tuned <- performance(prd_tuned, list(rmse, mae, rsq))
+knitr::kable(rbind('bez skalowania'=perf_noscale, 'ze skalowaniem'=perf,'skalowanie + hiperparametry'=perf_tuned))
+
+lrn3_tuned <- makeLearner("classif.svm", predict.type = "prob", par.vals = svm_tune2$x)
+
+trn3_tuned <- train(learner = lrn3_tuned, task = task3)
+prd3_tuned <- predict(trn3_tuned, newdata = telescope_test)
+perf3_tuned <- performance(prd3_tuned, list(acc,auc,tnr, tpr, ppv))
+knitr::kable(rbind('bez skalowania'=perf3_noscale, 'ze skalowaniem'=perf3, 'skalowanie + hiperparametry'=perf3_tuned))
+```
+
+**WNIOSEK**: Dobranie hiperparametrów poprawiło wyniki.
+
+# Partial Dependence Polt
+
+Jak modelu drzewiastego użyję rangera
+```{r ranger, echo=FALSE}
+lrn_tree <- makeLearner("regr.ranger")
+trn_tree <- train(task = task, learner = lrn_tree)
+
+custom_predict <- function(object, newdata) {pred <- predict(object, newdata=newdata)
+response <- pred$data$response
+return(response)}
+```
+
+
+```{r pdp, cache=TRUE}
+explainer <- explain(trn, data = apartmentsTest[,2:6], y = apartmentsTest$m2.price, predict_function = custom_predict, label = "przed")
+explainer_tuned <- explain(trn_tuned, data = apartmentsTest[,2:6], y = apartmentsTest$m2.price, predict_function = custom_predict, label = "po")
+explainer_tree <- explain(trn_tree, data = apartmentsTest[,2:6], y = apartmentsTest$m2.price, predict_function = custom_predict,label= "ranger")
+
+sv <- single_variable(explainer,variable =  "construction.year", type = "pdp")
+sv_tuned <- single_variable(explainer_tuned,variable =  "construction.year", type = "pdp")
+sv_tree<- single_variable(explainer_tree,variable =  "construction.year", type = "pdp")
+plot(sv,sv_tuned,sv_tree)
+```
+
+Jak widać na wykresie SVM przewiduje zmienną według zależności kwadratowej, a ranger w bardziej nieregularny sposób, ale też podobny do funkcji kwadratowej.
+
