@@ -145,7 +145,7 @@ bmr2 <- benchmark(learners = list(classif_lrn1a,classif_lrn1b), tasks = classif_
 bmr2
 ```
 
-Można zauważyć jednak, że AUC, oraz ACC okazało się lepsze dla "prostszego" drzewa opartego o Gini Index.
+Można zauważyć jednak, że AUC okazało się lepsze dla "prostszego" drzewa opartego o Gini Index.
 
 # Podsumowanie
 
