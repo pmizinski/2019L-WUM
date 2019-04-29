@@ -1,0 +1,211 @@
+---
+title: "WUM PD nr 4"
+author: "Bartłomiej Granat"
+date: "`r format(Sys.time(), '%d - %m - %Y')`"
+output:
+  html_document:
+    dane_print: paged
+    toc: true
+    toc_float: true
+    code_folding: hide
+    number_sections: true
+---
+
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE, cache = TRUE, warning = FALSE)
+
+library(mlr)
+library(DALEX)
+library(OpenML)
+library(DataExplorer)
+
+apartments_dat <- apartments
+
+tokyo <- getOMLDataSet(data.id = 40705)
+drops <- c("io_namei","net_frac_busy")
+tokyo_dat <- tokyo$data[,!(names(tokyo$data) %in% drops)]
+```
+
+# Wstęp
+
+W poniższym raporcie przedstawiona została analiza algorytmu Support Vector Machine. Na zbiorze $apartments$ z pakietu $DALEX$ został dopasowany model regresyjny, a na zbiorze $tokyo1$ z OpenML model klasyfikacyjny.
+
+Na podstawie http://pyml.sourceforge.net/doc/howto.pdf skuteczność tego algorytmu zależy w znacznym stopniu od skalowania danych, a także od jądra oraz hiperparametrów. Najważniejszymi z nich są koszt oraz gamma. Powyższe stwierdzenia badane są w tym raporcie.
+
+# Wyniki modelu bez skalowania 
+
+Zbiorem, na którym jest badana skuteczność algorytmu dla problemu regresji jest $apartments$. Posiada on, oprócz zmiennej celu, $4$ zmienne numeryczne. 
+
+```{r}
+head(apartments_dat)
+```
+
+Zobaczmy jak model działa bez skalowania
+
+```{r}
+cv <- makeResampleDesc("CV", iters = 5)
+
+regr_task <- makeRegrTask(id = "regr_task", data = apartments_dat, target = "m2.price")
+
+regr_lrn <- makeLearner("regr.svm", predict.type = "response", par.vals = list(scale=FALSE))
+
+r <- mlr::resample(regr_lrn, regr_task, cv, measures = list(mse, rmse, mae), show.info = FALSE)
+regr_scores <- r$aggr
+regr_scores
+```
+
+Zbiorem, na którym jest badana skuteczność algorytmu dla problemu klasyfikacji binarnej jest zbiór $tokyo1$
+
+```{r}
+introduce(tokyo_dat)
+```
+
+Zbiór ten ma 42 zmienne numeryczne bardzo różnych rzędów wielkości. Powinien być więc doskonałym kandydatem do wpływu normalizacji danych na skuteczność algorytmu
+
+```{r}
+classif_task <- makeClassifTask(id = "classif_task", data = tokyo_dat, target = "class")
+
+classif_lrn <- makeLearner("classif.svm", predict.type = "prob", par.vals = list(scale = FALSE))
+
+r_classif <- mlr::resample(classif_lrn, classif_task, cv, measures = list(acc, auc), show.info = FALSE)
+classif_scores <- r_classif$aggr
+classif_scores
+```
+
+Wynik nie jest satysfakcjonujący. Możemy sprawdzić także jak wygląda wizualizacja podziału na klasy przy rzutowaniu na dwie zmienne bardzo różniące się rzędem wielkości
+
+```{r}
+plotLearnerPrediction(learner = classif_lrn,task = classif_task, features = c("io_iget","disk_avg_total"))
+```
+
+# Wyniki modelu na znormalizowanych danych
+
+SVM domyślnie normalizuje kolumny numeryczne. Zobaczmy jak różnią się wyniki
+
+```{r}
+# normalized 
+
+regr_lrn2 <- makeLearner("regr.svm", predict.type = "response")
+
+r2_regr <- mlr::resample(regr_lrn2, regr_task, cv, measures = list(mse, rmse, mae), show.info = FALSE)
+regr_scores2 <- r2_regr$aggr
+regr_scores2
+
+classif_lrn2 <- makeLearner("classif.svm", predict.type = "prob")
+
+r2_classif <- mlr::resample(classif_lrn2, classif_task, cv, measures = list(acc, auc), show.info = FALSE)
+classif_scores2 <- r2_classif$aggr
+classif_scores2
+```
+
+Widzimy, że wyniki są zdecydowanie lepsze. Dla wyników klasyfikacji możemy także ponownie spróbować zobrazować działanie modelu.
+
+```{r}
+plotLearnerPrediction(learner = classif_lrn2,task = classif_task, features = c("io_iget","disk_avg_total"))
+```
+
+Pomimo, że zmienne zdecydowanie różnią się rzędem wielkości normalizacja pozwoliła znacznie lepiej podzielić nasz zbiór.
+
+# Optymalizacja kluczowych hiperparametrów
+
+Pomimo uzyskania bardzo dobrych wyników zarówno dla regresji jak i klasyfikacji spróbujemy zoptymalizować kluczowe hiperparametry tzn. "cost" oraz "gamma". Zbadamy także jakie jądro jest najlepsze dla naszych zbiorów
+
+```{r}
+set.seed(1232)
+
+ps = makeParamSet(
+  makeDiscreteParam("kernel", values = c( "radial","linear")),
+  makeNumericParam("cost", 0,10),
+  makeNumericParam("gamma", 0,10, requires = quote(kernel == "radial"))
+)
+
+
+ctrl = makeTuneControlRandom(maxit = 30L)
+
+res = tuneParams("regr.svm", task = regr_task, resampling = cv,
+                    par.set = ps, control = ctrl, show.info = FALSE)
+
+lrn = setHyperPars(makeLearner("regr.svm"), par.vals = res$x) 
+r_regr <- mlr::resample(lrn, regr_task, cv, measures = list(mse, rmse, mae), show.info = FALSE)
+regr_scores <- r_regr$aggr
+res
+regr_scores
+
+# classif hypers
+
+ctrl = makeTuneControlRandom(maxit = 30L)
+
+res2 = tuneParams("classif.svm", task = classif_task, resampling = cv,
+                 par.set = ps, control = ctrl, show.info = FALSE)
+
+lrn2 = setHyperPars(makeLearner("classif.svm", predict.type = "prob"), par.vals = res$x) 
+r_classif2 <- mlr::resample(lrn2, classif_task, cv, measures = list(acc, auc), show.info = FALSE)
+classif_scores2 <- r_classif2$aggr
+res2
+classif_scores2
+```
+
+
+W obu przypadkach najlepszym jądrem było $radial$ zgodnie z treścią artykułu. Ponadto przy użyciu tuningu hiperparametrów udało się uzyskać jeszcze lepsze wyniki zarówno regresji jak i klasyfikacji co dowodzi istotności rozważanych przez nas parametrów.
+
+# Wykresy PDP SVM vs RF
+
+## Regresja
+
+```{r}
+my_pred <- function(object, newdata) {pred <- predict(object, newdata=newdata)
+                                              response <- pred$data$response
+                                              return(response)}
+
+
+m_regr1 <- train(regr_lrn2, regr_task)
+m_regr2 <- train(lrn, regr_task)
+m_regr3 <- train(makeLearner("regr.randomForest"), regr_task)
+
+exp_regr1 <- explain(m_regr1, data = apartments_dat, predict_function = my_pred, label = "svm")
+exp_regr2 <- explain(m_regr2, data = apartments_dat, predict_function = my_pred, label = "svm_2")
+exp_regr3 <- explain(m_regr3, data = apartments_dat, predict_function = my_pred, label = "rf")
+
+pdp_regr1 <- variable_response(exp_regr1, variable = "construction.year", type = "pdp")
+pdp_regr2 <- variable_response(exp_regr2, variable = "construction.year", type = "pdp")
+pdp_regr3 <- variable_response(exp_regr3, variable = "construction.year", type = "pdp")
+
+pdp_regr4 <- variable_response(exp_regr1, variable = "surface", type = "pdp")
+pdp_regr5 <- variable_response(exp_regr2, variable = "surface", type = "pdp")
+pdp_regr6 <- variable_response(exp_regr3, variable = "surface", type = "pdp")
+
+plot(pdp_regr1,pdp_regr2,pdp_regr3)
+plot(pdp_regr4,pdp_regr5,pdp_regr6)
+```
+
+## Klasyfikacja
+
+```{r}
+my_pred2 <- function(object, newdata) {pred <- predict(object, newdata=newdata)
+                                              response <- pred$data[,3]
+                                              return(response)}
+
+
+m_classif1 <- train(classif_lrn2, classif_task)
+m_classif2 <- train(lrn2, classif_task)
+m_classif3 <- train(makeLearner("classif.randomForest", predict.type = "prob"), classif_task)
+
+exp_classif1 <- explain(m_classif1, data = tokyo_dat, predict_function = my_pred2, label = "svm")
+exp_classif2 <- explain(m_classif2, data = tokyo_dat, predict_function = my_pred2, label = "svm_2")
+exp_classif3 <- explain(m_classif3, data = tokyo_dat, predict_function = my_pred2, label = "rf")
+
+pdp_classif1 <- variable_response(exp_classif1, variable = "net_avg_total", type = "pdp")
+pdp_classif2 <- variable_response(exp_classif2, variable = "net_avg_total", type = "pdp")
+pdp_classif3 <- variable_response(exp_classif3, variable = "net_avg_total", type = "pdp")
+
+pdp_classif4 <- variable_response(exp_classif1, variable = "cpu_avg_user", type = "pdp")
+pdp_classif5 <- variable_response(exp_classif2, variable = "cpu_avg_user", type = "pdp")
+pdp_classif6 <- variable_response(exp_classif3, variable = "cpu_avg_user", type = "pdp")
+
+plot(pdp_classif1,pdp_classif2,pdp_classif3)
+plot(pdp_classif4,pdp_classif5,pdp_classif6)
+
+```
+
+Jak widzimy zarówno dla klasyfikacji jak i regresji $svm$ daje funkcje wielomianowe, lasy losowe zdają się działać natomiast bardziej skokowo. Ponadto model po tuningu parametrów reaguje szybciej na zmiany cech niż domyślny.
