@@ -1,0 +1,250 @@
+---
+title: "Praca domowa #4"
+author: "Małgorzata Wachulec"
+date: "15/04/2019"
+output: 
+  html_document:
+    df_print: paged
+    toc: true
+    toc_float: true
+    code_folding: hide
+    number_sections: true
+---
+
+# Wstęp 
+
+W tej pracy domowej omówiona będzie metoda SVM na przykładzie regresji dla zbioru apartments z bibioteki DALEX oraz na przykładzie klasyfikacji na zbiorze diabetes z OpenML. W następnych częściach tej pracy sprawdzę, czy skalowanie danych pomoże uzykać lepsze wyniki modelu oraz spróbuję zoptymalizować jego najważniejsze hiperparametry.
+
+```{r setup, include=FALSE}
+# libraries
+library(DALEX)
+library(OpenML)
+library(mlr)
+library(gridExtra)
+
+# data
+apartments <- DALEX::apartments
+diabetes_set <- getOMLDataSet(data.id = 37L) 
+diabetes <- diabetes_set$data
+
+set.seed(543)
+```
+
+# Dopasowanie modelu przed skalowaniem
+
+```{r without, cache = TRUE}
+# tasks and learners without scaling
+regr_task <- makeRegrTask("task_apartments", data = apartments, target = "m2.price")
+regr_lrn <- makeLearner("regr.svm", par.vals = list(scale = FALSE))
+
+classif_task <- makeClassifTask(id = "task_diabetes", data = diabetes, target = "class")
+classif_lrn <- makeLearner("classif.svm", predict.type = "prob", par.vals = list(scale = FALSE))
+
+# audit without scaling
+cv <- makeResampleDesc("CV", iters = 5)
+```
+
+Wyniki kroswalidacji dla regresji na zbiorze apaprtments:
+```{r ap, cache = TRUE, include=FALSE}
+res_regr <- resample(regr_lrn, regr_task, cv, measures = list(mlr::rmse, mlr::rae, mlr::rsq))
+```
+
+```{r ap2, cache = TRUE}
+res_regr$aggr
+```
+
+Błędy są ogromne, raczej nie zdecydowalibyśmy się użyć takiego modelu w praktyce. Za chwilę porównamy go z tym po skalowaniu.
+
+Wyniki kroswalidacji dla klasyfikacji na zbiorze diabetes:
+```{r dia, cache = TRUE, include = FALSE}
+res_classif <- resample(classif_lrn, classif_task, cv, measures = list(mlr::acc, mlr::auc, mlr::f1))
+```
+
+```{r dia2, cache = TRUE}
+res_classif$aggr
+```
+
+Jak widzimy, auc jest poniżej 0.5, co potwierdza, że model ten działa gorzej niż przypadkowo. Sprawdźmy, czy przeskalowanie pomoże uzyskać lepsze wyniki.
+
+# Dopasowanie modelu po skalowaniu
+
+```{r with, cache = TRUE, include=FALSE}
+# learners with scaling
+regr_lrn_scale <- makeLearner("regr.svm", par.vals = list(scale = TRUE))
+classif_lrn_scale <- makeLearner("classif.svm", predict.type = "prob", par.vals = list(scale = TRUE))
+
+# audit with scaling
+res_regr_scale <- resample(regr_lrn_scale, regr_task, cv, measures = list(mlr::rmse, mlr::rae, mlr::rsq))
+res_classif_scale <- resample(classif_lrn_scale, classif_task, cv, measures = list(mlr::acc, mlr::auc, mlr::f1))
+```
+
+Wyniki kroswalidacji dla regresji na zbiorze apaprtments - po skalowaniu:
+```{r ap_after, cache = TRUE}
+res_regr_scale$aggr
+```
+
+Wyniki kroswalidacji dla klasyfikacji na zbiorze diabetes - po skalowaniu:
+```{r dia_after, cache = TRUE}
+res_classif_scale$aggr
+```
+
+Dopasowanie obu modeli znacznie się poprawiło, rmse znacznie zmalało, a auc wzrosło do przyzwoitego poziomu. Sprawdźmy, czy możemy jeszcze ulepszyć, optymalizując hiperparametry.
+
+# Optymalizacja hiperparametrów
+
+Na stronie: https://medium.com/all-things-ai/in-depth-parameter-tuning-for-svc-758215394769 są podane i wyjaśnione najważniejsze hiperparametry modelu svm. Są to według nich: kernel - jądro modelu, gamma - parametr odpowiadający za to, jak bardzo model dopasuje się do zbioru treningowego dla jądra typu radial, cost - koszt błędu, parametr pozwalający na kompromis pomiędzy np. gładką linią decyzyjną dla klasyfikacji, a przewidywaniem każdej obserwacji ze zbioru treningowego poprawnie, a także degree, który oznacza stopień dla wielomianowej metody wyznaczania modelu, tzn. dla jądra typu polynomial.
+
+Będę optymalizować hiperparametry przy pomocy funkcji makeTuneControlRandom() ze stoma iteracjami.
+
+```{r params, cache=TRUE}
+svm_param_set <- makeParamSet(
+  makeDiscreteParam("kernel", values = c("radial", "polynomial", "linear")),
+  makeNumericParam("cost", lower = -15, upper = 15, trafo = function(x) 2^x),
+  makeNumericParam("gamma", lower = -15, upper = 15, trafo = function(x) 2^x, requires = quote(kernel == "radial")),
+  makeIntegerParam("degree", lower = 1, upper = 5, requires = quote(kernel == "polynomial"))
+)
+```
+
+
+Optymalne hiperparametry svm dla regresji na zbiorze apartments:
+```{r para_reg, cache=TRUE}
+#regr_pars <- tuneParams(regr_lrn_scale, regr_task, measures = mlr::rmse,
+#                        par.set = svm_param_set, show.info = FALSE, 
+#                        resampling = cv,
+#                        control = makeTuneControlRandom(maxit = 100))
+#saveRDS(regr_pars,file="regr_pars")
+regr_pars <- readRDS("regr_pars")
+regr_pars$x
+```
+
+Miary modelu dla tych parametrów:
+```{r include=FALSE}
+lrn_t <- setHyperPars(regr_lrn_scale, par.vals = regr_pars$x)
+r <- resample(lrn_t, regr_task, cv, measures = list(mlr::rmse, mlr::rae, mlr::rsq))
+```
+
+```{r}
+r$aggr
+```
+
+Optymalne hiperparametry svm dla klasyfikacji na zbiorze diabetes:
+```{r para_classif, cache=TRUE}
+#classif_pars <- tuneParams(classif_lrn_scale, classif_task, measures = mlr::auc,
+#                        par.set = svm_param_set, show.info = TRUE, 
+#                        resampling = cv,
+#                        control = makeTuneControlRandom(maxit = 100))
+#saveRDS(classif_pars,file="classif_pars")
+classif_pars <- readRDS("classif_pars")
+classif_pars$x
+```
+
+Miary modelu dla danych parametrów:
+```{r cache=TRUE, include=FALSE}
+lrn_t2 <- setHyperPars(classif_lrn_scale, par.vals = classif_pars$x)
+r2 <- resample(lrn_t2, classif_task, cv, measures = list(mlr::acc, mlr::auc, mlr::f1))
+```
+
+```{r cache=TRUE}
+r2$aggr
+```
+
+Oba modele najlepiej działają na jądrze typu radial, takie jest też domyślne jądro zarówno dla svm klasyfikacyjnego i regresyjnego. Choć dla modelu klasyfikacji zmiana jest rzędu <1%, to mimo wszystko optymalizacja hiperparametrów ulepszyła oba modele. 
+
+# Przed i po optymalizacji - porównanie z innym modelem
+
+W tej części porównam działanie svm przed optymalizacją hiperparametów i po niej z modelem ranger.
+
+Jak dane modele radzą sobie z regresją na zbiorze apartments:
+```{r comp_regr, cache=TRUE}
+comp_regr_lrn <- makeLearner("regr.ranger")
+
+custom_predict <- function(object, newdata) {pred <- predict(object, newdata=newdata)
+                                              response <- pred$data$response
+                                              return(response)}
+
+regr_ranger <- mlr::train(comp_regr_lrn, regr_task)
+regr_svm_without <- mlr::train(regr_lrn_scale, regr_task)
+regr_svm_with <- mlr::train(lrn_t, regr_task)
+
+explainer_regr_ranger <- DALEX::explain(regr_ranger, data=apartments, y=apartments$m2.price, predict_function = custom_predict, label="ranger")
+
+explainer_regr_svm_without <- DALEX::explain(regr_svm_without, data=apartments, y=apartments$m2.price, predict_function = custom_predict, label="svm before tunning")
+
+explainer_regr_svm_with <- DALEX::explain(regr_svm_with, data=apartments, y=apartments$m2.price, predict_function = custom_predict, label="svm after tunning")
+
+mp_regr_ranger <- model_performance(explainer_regr_ranger)
+mp_regr_svm_without <- model_performance(explainer_regr_svm_without)
+mp_regr_svm_with <- model_performance(explainer_regr_svm_with)
+
+plot(mp_regr_ranger,mp_regr_svm_without,mp_regr_svm_with)
+```
+
+Model svm po optymalizacji hiperparametrów działa lepiej niż ten przed nią. Widzimy też, że model ranger radzi sobie z regresją na tym zbiorze znacznie lepiej niż oba te modele. Kolejnym etapem jest sprawdzenie jak dane modele reagują na poszczególne zmienne. Dla regresji postanowiłam to pokazać dla najważniejszej zmiennej numerycznej, surface, znalezionej przy użyciu funkcji variable_importance() z pakietu DALEX. Na drugim wykresie widać jak modele reagują na zmienną construction.year - wybrałam ją ponieważ ma ciekawszą zależność, nie liniową.
+
+```{r pdp_regr, cache=TRUE}
+vi_ra <- variable_importance(explainer_regr_ranger, loss_function = loss_root_mean_square)
+vi_be <- variable_importance(explainer_regr_svm_without, loss_function = loss_root_mean_square)
+vi_af <- variable_importance(explainer_regr_svm_with, loss_function = loss_root_mean_square)
+
+sv_regr_ranger  <- single_variable(explainer_regr_ranger, variable =  "surface", type = "pdp")
+sv_regr_ranger2  <- single_variable(explainer_regr_ranger, variable =  "construction.year", type = "pdp")
+sv_regr_svm_without  <- single_variable(explainer_regr_svm_without, variable =  "surface", type = "pdp")
+sv_regr_svm_without2  <- single_variable(explainer_regr_svm_without, variable =  "construction.year", type = "pdp")
+sv_regr_svm_with  <- single_variable(explainer_regr_svm_with, variable =  "surface", type = "pdp")
+sv_regr_svm_with2  <- single_variable(explainer_regr_svm_with, variable =  "construction.year", type = "pdp")
+plot(sv_regr_ranger, sv_regr_svm_without, sv_regr_svm_with)
+plot(sv_regr_ranger2, sv_regr_svm_without2, sv_regr_svm_with2)
+```
+
+Jak widać, modele svm są gładsze niż raner, widać to zwłaszcza na drugim wykresie gdzie dla modelu drzewiastego widzimy jawne skoki.
+
+Jak modele radzą sobie z klasyfikacją na zbiorze diabetes:
+
+```{r comp_classif, cache=TRUE, warning=FALSE}
+comp_classif_lrn <- makeLearner("classif.ranger",predict.type ="prob")
+
+custom_predict2 <- function(object, newdata) {
+  getPredictionProbabilities(predict(object, newdata=newdata))
+}
+
+classif_ranger <- mlr::train(comp_classif_lrn, classif_task)
+classif_svm_without <- mlr::train(classif_lrn_scale, classif_task)
+classif_svm_with <- mlr::train(lrn_t2, classif_task)
+
+explainer_classif_ranger <- explain(classif_ranger, data=diabetes[,-9], y=diabetes$class == "tested_positive", predict_function = custom_predict2, label="ranger")
+
+explainer_classif_svm_without <- DALEX::explain(classif_svm_without, data=diabetes[,-9], y=diabetes$class == "tested_positive", predict_function = custom_predict2, label="svm before tunning")
+
+explainer_classif_svm_with <- DALEX::explain(classif_svm_with, data=diabetes[,-9], y=diabetes$class == "tested_positive", predict_function = custom_predict2, label="svm after tunning")
+
+mp_classif_ranger <- model_performance(explainer_classif_ranger)
+mp_classif_svm_without <- model_performance(explainer_classif_svm_without)
+mp_classif_svm_with <- model_performance(explainer_classif_svm_with)
+
+plot(mp_classif_ranger,mp_classif_svm_without,mp_classif_svm_with)
+```
+
+Tutaj svm after tunning zdaje się radzić sobie najlepiej. Popatrzmy teraz na to jak modele reagują na 3 najważniejsze zmienne zbioru diabetes, czyli na zmienne: skin, insu oraz pedi.
+
+```{r pdp_classif, cache=TRUE}
+vi_ra2 <- variable_importance(explainer_classif_ranger, loss_function = loss_root_mean_square)
+vi_be2 <- variable_importance(explainer_classif_svm_without, loss_function = loss_root_mean_square)
+vi_af2 <- variable_importance(explainer_classif_svm_with, loss_function = loss_root_mean_square)
+
+sv_classif_ranger  <- single_variable(explainer_classif_ranger, variable =  "skin", type = "pdp")
+sv_classif_ranger2  <- single_variable(explainer_classif_ranger, variable =  "insu", type = "pdp")
+sv_classif_ranger3  <- single_variable(explainer_classif_ranger, variable =  "pedi", type = "pdp")
+sv_classif_svm_without  <- single_variable(explainer_classif_svm_without, variable =  "skin", type = "pdp")
+sv_classif_svm_without2  <- single_variable(explainer_classif_svm_without, variable =  "insu", type = "pdp")
+sv_classif_svm_without3  <- single_variable(explainer_classif_svm_without, variable =  "pedi", type = "pdp")
+sv_classif_svm_with  <- single_variable(explainer_classif_svm_with, variable =  "skin", type = "pdp")
+sv_classif_svm_with2  <- single_variable(explainer_classif_svm_with, variable =  "insu", type = "pdp")
+sv_classif_svm_with3  <- single_variable(explainer_classif_svm_with, variable =  "pedi", type = "pdp")
+plot(sv_classif_ranger, sv_classif_svm_without, sv_classif_svm_with)
+plot(sv_classif_ranger2, sv_classif_svm_without2, sv_classif_svm_with2)
+plot(sv_classif_ranger3, sv_classif_svm_without3, sv_classif_svm_with3)
+```
+
+Na pierwszych dwóch wykresach widać, że wpływ zmiennych skin i insu na modele svm uległ diametralnej zmianie po optymalizacji hiperparametrów. Można wręcz powiedzieć, że model svm odwrócił się o 180 stopni - tam, gdzie przewidywał spadek wraz ze wzrostem zmiennej, po tunningu przewiduje wzrost prawdopodobieństwa przynależności do klasy. Model ranger plasuje się gdzieś pomiędzy tymi wykresami i dalej widzimy jego skokową strukturę.
+
+Na ostatnim wykresie widać, że wszystkie modele zachowują się podobnie względem zmiennej pedi, choć występują niewielkie różnice.
