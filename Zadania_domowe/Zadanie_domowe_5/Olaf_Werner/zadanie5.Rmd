@@ -1,0 +1,117 @@
+---
+title: "Zadanie 5"
+author: "Olaf Werner"
+date: "April 28, 2019"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE,warning = FALSE)
+set.seed(123, "L'Ecuyer")
+library(mlr)
+library(readr)
+library(DataExplorer)
+library(dplyr)
+library(rpart)
+library(rpart.plot)
+library(knitr)
+train <- read_csv("titanic/kaggle-titanic-master/input/train.csv")
+train<-drop_columns(train,c("Name","PassengerId","Ticket"))
+train[sapply(train, is.character)] <- lapply(train[sapply(train, is.character)],as.factor) 
+train$Survived<-as.factor(as.logical(train$Survived))
+train$Cabin<-as.factor(!is.na(train$Cabin))
+```
+
+## Zbiór Danych
+
+```{r echo=FALSE}
+knitr::include_graphics("titanic-disaster.jpg")
+```
+
+Będziemy operować na zbiorze danych z [kaggla](https://www.kaggle.com/broaniki/titanic) o losach pasażerów Tytanica. Naszym celem będzie predykcja tego czy dana osoba przeżyje czy nie. Miarą określającą jakość modelu będzie AUC.
+Zrobiłem na zbiorze małe modyfikacje. Po pierwsze usunołem kolumny Name, PassengerId, Ticket ponieważ nie niosły żadnej informacji. Po drugie kolumnę
+Cabin zmieniłem na wartość logiczną określającą czy dana osoba miała w ogóle jakąś kabinę.
+
+##Hiperparametry drzew
+Model rpart ma różne parametry my skupimy się na następujących:
+
+1. **maxdepth** czyli maksymalna głębokośc drzewa, gdzie korzen uznajemy ze ma głębokość 0
+2. **minsplit** to minimalna ilosc obserwacji dla ktorej mozemy dalej dzielic dany węzeł
+3. **minbucket** to minimalna ilość obserwacji w lisciu
+4. **cp** to stopień złożoności drzewa. Oznacza to że jeżeli podział węzła nie zmiejsza ogólnego braku dopasowania o co najmniej cp to się go nie dzieli.
+
+
+##Ustawiamy parametry modeli
+
+Ustawiłem parametry jednego z modeli zgodnie z treścią [artykułu](https://arxiv.org/pdf/1802.09596.pdf)
+
+```{r }
+task <- makeClassifTask(id = "task", data = train, target = "Survived")
+learner_default<-makeLearner("classif.rpart",predict.type = "prob")
+learner_article<-makeLearner("classif.rpart",predict.type = "prob",par.vals = list(cp=0.001,maxdepth=13,minbucket=12,minsplit=18))
+rpart_pars <- tuneParams(
+  makeLearner("classif.rpart",predict.type = "prob"),
+  subsetTask(makeClassifTask(id = "task", data = train, target = "Survived")),
+  resampling = cv5,
+  measures = mlr::auc,
+  par.set = makeParamSet(
+    makeNumericParam("cp",lower = 0,upper = 1),
+    makeDiscreteParam("maxdepth", values = 1:30),
+    makeDiscreteParam("minbucket", values = 1:40),
+    makeDiscreteParam("minsplit", values = 1:40)
+  ),
+  control = makeTuneControlRandom(maxit = 200), show.info=FALSE
+  )
+learner_random<-makeLearner("classif.rpart",predict.type = "prob",par.vals = rpart_pars$x)
+```
+
+
+
+##Porównanie wyników
+```{r echo=FALSE}
+cv <- makeResampleDesc("CV", iters = 5)
+r_article <- resample(learner_article, task, cv,measures = list(auc),extract = function(x){getLearnerModel(x)},show.info = FALSE)
+#rpart.plot(r_article$extract[[which.max(r_article$measures.test$auc)]])
+#r_article$aggr
+
+r_default <- resample(learner_default, task, cv,measures = list(auc),extract = function(x){getLearnerModel(x)},show.info = FALSE)
+#rpart.plot(r_default$extract[[which.max(r_default$measures.test$auc)]])
+#r_default$aggr
+
+r_random <- resample(learner_random, task, cv,measures = list(auc),extract = function(x){getLearnerModel(x)},show.info = FALSE)
+#rpart.plot(r_random$extract[[which.max(r_random$measures.test$auc)]])
+#r_random$aggr
+
+podsumowanie<-rbind(r_article$aggr,r_default$aggr,r_random$aggr)
+rownames(podsumowanie)<-c("article","default","random")
+knitr::kable(podsumowanie,row.names = TRUE, format = "markdown", padding = 0)
+```
+
+Jak widzimy najlepszym modelem okazał się ten proponowany przez artykuł, choć różnice były niewielkie
+
+##Drzewo decyzyjne dla modelu proponowanego przez artykuł
+
+Pokazujemy drzewo które zostało wytrenowane na pełnych danych.
+
+```{r echo=FALSE}
+tree<-mlr::train(learner_article,task)
+rpart.plot(tree$learner.model)
+```
+
+Jak widzimy najważniejszą cechą jest płeć danej osoby, a później w zależności od płci klasa lub posiadanie kabiny, czyli ogólnie lepiej być kobietą i mieć pieniądze by przeżyć katastrofę Tytanica.
+
+##Porównanie drzew domyślych ze zmienionym kryterium podziału
+
+```{r echo=FALSE}
+par(mfrow=c(1,2))
+learner_information<-makeLearner("classif.rpart",predict.type = "prob",par.vals = list(parms = list(split = 'information')))
+tree_default<-mlr::train(learner_default,task)
+rpart.plot(tree_default$learner.model)
+tree_information<-mlr::train(learner_information,task)
+rpart.plot(tree_information$learner.model)
+```
+
+Nie ma w tym przypadku wielkich różnic.
+
+##Podsumowanie
+Mimo że rpart jest stosunkowo prostym modelem to dla drzew o niskiej głebokości jest on bardzo dobrze wyjaśnialnym modelem. Po za tym można go zauważalnie poprawić zmieniając jego parametry.
