@@ -1,0 +1,523 @@
+---
+title: "Projekt 1 - raport końcowy"
+author: "Hubert Baniecki, Łukasz Brzozowski, Szymon Maksymiuk"
+date: "`r format(Sys.time(), '%d - %m - %Y')`"
+output:
+  html_document:
+    df_print: paged
+    toc: true
+    toc_float: true
+    code_folding: hide
+    number_sections: true
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(warning=FALSE, message=FALSE, error=FALSE, cache = TRUE)
+library(readr)
+library(dplyr)
+library(ggplot2)
+library(knitr)
+library(visdat)
+library(DataExplorer)
+library(kableExtra)
+library(scales)
+require(gridExtra)
+library(funModeling)
+library(forcats)
+library(patchwork)
+library(ggmosaic)
+library(caret)
+library(mlr)
+library(parallelMap)
+library(parallel)
+library(mlrMBO)
+```
+
+# Wprowadzenie i prezentacja danych
+
+
+Prezentujemy dane pochodzące z bazy używanej w systemie COMPAS - Correctional Offender Management Profiling for Alternative Sanctions, używanej przez sędziów i policję do oceny prawdopodobieństwa, że&nbsp;zatrzymany zostanie recydywistą, tj. ponownie popełni przestępstwo (na przestrzeni 2 lat od wyjścia na wolność). Dane dotyczą przestępstw dokonanych w&nbsp;Broward County na Florydzie. Na podstawie danych przygotujemy modele klasyfikacyjne służące do&nbsp;przewidywania, czy dany przestępca popełni przestępstwo.
+
+```{r}
+enc <- guess_encoding("cox-violent-parsed.csv", n_max = 10000)[[1]]
+dane <- as.data.frame(read_csv("cox-violent-parsed.csv", locale = locale(encoding = enc[1])))
+
+df <- select(dane, sex, age, age_cat, race, juv_fel_count, juv_misd_count, juv_other_count, priors_count, c_charge_degree, c_charge_desc, c_jail_in, c_jail_out, is_recid, days_b_screening_arrest, c_case_number)
+
+df <- df[!is.na(df$c_case_number),]
+df <- df %>% group_by(c_case_number) %>% mutate(count = n())
+
+df[df == ""] <- NA
+df <- na.omit(df)
+
+df$c_jail_in <- as.Date(substring(df$c_jail_in, 1, 10),
+                              format = "%d/%m/%Y")
+df$c_jail_out <- as.Date(substring(df$c_jail_out, 1, 10),
+                              format = "%d/%m/%Y")
+
+df$jailLength <- as.numeric(as.Date(df$c_jail_out) - as.Date(df$c_jail_in))
+
+df <- df %>% filter(jailLength!=0) %>% 
+        filter(days_b_screening_arrest <= 30) %>%
+        filter(days_b_screening_arrest >= -30) %>% 
+        select(-days_b_screening_arrest, -c_jail_in, -c_jail_out) %>% 
+        filter(is_recid!=-1) %>% 
+        filter(c_charge_degree != "O")
+
+df <- as.data.frame(unclass(df))
+
+colnames(df) <- c("sex", "age", "ageCat", "race", "juvFel", "juvMisd", "juvOther", "priors", "chargeDegree", "chargeDesc", "isRecid", "caseNumber", "arrestCount", "jailLength")
+
+df$chargeDegree <- factor(df$chargeDegree, levels = unique(df$chargeDegree))
+df <- unique(df)
+
+d <- df
+```
+
+## Dane początkowe
+
+Początkowa ramka danych ma wymiary 18316x52. Ze zbioru wybraliśmy 14 zmiennych, które mogą być istotne z punktu widzenia zadania oraz kolumnę celu `is_recid`. Usunęliśmy powtarzające się wiersze oraz takie, które zawierają brakujące dane. Pozbyliśmy się też danych błędnych, np. gdy zatrzymany spędził w więzieniu 0 dni, i&nbsp;danych, które zaszumiłyby klasyfikację - wartości `-1` w kolumnie celu oznaczające brak danych. Po&nbsp;oczyszczeniu danych otrzymaliśmy ramkę zawierającą 7850 unikalnych wierszy.
+
+## Opis kolumn
+
+* `sex` - płeć zatrzymanego
+* `race` - rasa
+* `age` - wiek w latach
+* `ageCat` - kategoria wiekowa
+* `juvFel` - liczba poważnych przestępstw jako nieletni
+* `juvMisd` - liczba wykroczeń jako nieletni
+* `juvOther` - liczba innych aktów kryminalnych jako nieletni
+* `priors` - liczba wyroków
+* `chargeDegree` - stopień przestępstwa
+* `chargeDesc` - opis przestępstwa
+* `caseNumber` - unikalny numer przestępstwa
+* `isRecid` - kolumna celu
+
+&nbsp;
+&nbsp;
+&nbsp;
+
+Na podstawie przygotowanej w powyższy sposób ramki danych będziemy trenować modele klasyfikacyjne służące przewidywaniu, czy dana osoba ponownie popełni przestępstwo.
+
+\newpage
+
+## Opis zmiennych
+
+Najpierw przyjrzymy się zmiennym opisującym przestępców.
+
+```{r  fig.width=7, fig.height=6, fig.align='center', cache = TRUE}
+temp1 <- within(d, sex <- factor(sex, levels=names(sort(table(sex), 
+                                                        decreasing=FALSE))))
+p1 <- ggplot(data = temp1, aes(x = sex, fill = isRecid == 1)) +
+  geom_bar(stat = "count") +
+  guides(fill = guide_legend(title="isRecid")) +
+  coord_flip()
+temp2 <- within(d, ageCat <- factor(ageCat, levels=names(sort(table(ageCat), 
+                                                        decreasing=FALSE))))
+p2 <- ggplot(data = temp2, aes(x = ageCat, fill = isRecid == 1)) +
+  geom_bar(stat = "count") +
+  guides(fill = guide_legend(title="isRecid")) +
+  coord_flip()
+temp3 <- within(d, race <- factor(race, levels=names(sort(table(race), 
+                                                        decreasing=FALSE))))
+p3 <- ggplot(data = temp3, aes(x = race, fill = isRecid == 1)) +
+  geom_bar(stat = "count") +
+  guides(fill = guide_legend(title="isRecid")) +
+  coord_flip()
+p1 / p2 / p3
+```
+
+Możemy zaobserwować, że mężczyźni, osoby w wieku 25-45 lat oraz Afroamerykanie najczęściej stają się recydywistami. Zwróćmy także uwagę, że osoby znajdujące się w przecięciu powyższych zbiorów stanowią znaczną część wszystkich recydywistów.
+
+```{r, fig.width=9, fig.height=6, fig.align='center', cache = TRUE}
+temp1 <- d[d$isRecid==1,]
+temp1[temp1$race == "Native American" | temp1$race == "Asian",]$race <- "Other"
+temp1$race <- factor(temp1$race, levels = c("African-American", "Caucasian", "Hispanic", "Other"))
+temp1 <- within(temp1, race <- factor(race, levels=names(sort(table(race), 
+                                                        decreasing=TRUE))))
+temp1$sex <- factor(temp1$sex, levels = c("Female", "Male"))
+ggplot(data = temp1) +
+  geom_mosaic(aes(x = product(ageCat, race), fill = sex)) +
+  labs(x = "", y = "", title = "Recydywiści") +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1),
+        axis.text.y = element_text(angle = 0, hjust = 1)) +
+  coord_flip()
+         
+```
+
+## Wcześniej popełniane przestępstwa
+
+Teraz możemy przyjrzeć się liczbie popełnianych przestępstw w wieku nieletnim.
+
+```{r  fig.width=9, fig.height=6, fig.align='center', cache = TRUE}
+temp <- select(d, juvFel, juvMisd, juvOther, priors, isRecid)
+temp$isRecid <- as.factor(temp$isRecid)
+
+plot1 <- ggplot(temp, aes(x = juvFel, fill = isRecid, color = isRecid)) +
+        geom_histogram(alpha = 0.4, bins = 7) + scale_y_log10()
+plot2 <- ggplot(temp, aes(x = juvMisd, fill = isRecid, color = isRecid)) +
+        geom_histogram(alpha = 0.4, bins = 7) + scale_y_log10()
+plot3 <- ggplot(temp, aes(x = juvOther, fill = isRecid, color = isRecid)) +
+        geom_histogram(alpha = 0.4, bins = 7) + scale_y_log10()
+plot4 <- ggplot(temp, aes(x = priors, fill = isRecid, color = isRecid)) +
+        geom_histogram(alpha = 0.4, bins = 7) + scale_y_log10()
+
+(plot1 + plot2)/(plot3 + plot4)
+```
+
+Jak widzimy powyżej, w znacznej większości przypadków zatrzymani nie popełniali przestępstw ani wykroczeń jako nieletni. Jedynie liczba wydanych wyroków ma bardziej liniowy rozkład. Warto zwrócić uwagę, że im więcej dana osoba popełniała przestępstw jako nieletnia, tym większa szansa, że&nbsp;zostanie recydywistą.
+
+## Stopień przestępstwa
+
+Ostatecznie warto przyjrzeć się stopniowi przestępstwa.
+
+```{r fig.width=9, fig.height=6, fig.align='center', cache = TRUE}
+ggplot(d, aes(x = chargeDegree, fill = isRecid == 1)) +
+  geom_bar() +
+  guides(fill = guide_legend(title="isRecid"))
+```
+
+Jak widzimy, wśród dostępnych obserwacji najczęściej pojawiają się F3 - przestępstwo 3. stopnia oraz M1 - wykroczenie 1. stopnia. Przykładowymi wykroczeniami F3 są kradzież samochodu, posiadanie twardych narkotyków czy prowadzenie pojazdu pod wpływem alkoholu. Do wykroczeń M1 należą zaś m.in. jednokrotna przemoc domowa, posiadanie broni bez pozwolenia oraz drobne kradzieże.
+
+```{r fig.align='center', cache = TRUE}
+temp1 <- d
+temp1$chargeDegree <- factor(temp1$chargeDegree, levels = c("(F3)", "(M1)", "(F2)", "(M2)", "Other"))
+temp1[!(temp1$chargeDegree %in% c("(F3)", "(M1)", "(F2)", "(M2)")),]$chargeDegree <- as.factor("Other")
+
+temp1 <- within(temp1, chargeDegree <- factor(chargeDegree, levels=names(sort(table(chargeDegree), 
+                                                        decreasing=TRUE))))
+ggplot(data = temp1) +
+  geom_mosaic(aes(x = product(chargeDegree), fill = isRecid == 1)) +
+  guides(fill = guide_legend(title="isRecid")) +
+  labs(x = "", y = "") +
+  coord_flip()
+```
+
+Powyżej widzimy ponadto, że osoby popełniające przestępstwa zaklasyfikowane do stopnia `(F3)` są najbardziej skłonni do popełniania przestępstw ponownie w porównaniu z innymi kategoriami.
+
+## Podsumowanie
+
+Po usunięciu nieistotnych z punktu widzenia modelu kolumn otrzymujemy dobrą do modelowania ramkę danych o niskim stopniu korelacji. Możemy zaobserwować silną przewagę rekordów dotyczących mężczyzn w wieku 25-45 i Afroamerykanów, co będzie należało wziąć pod uwagę w&nbsp;szczególności przygotowania zbiorów walidacyjnego i testowego. Ponadto można spodziewać się, że&nbsp;zmienna `priors` będzie miała duże znaczenie podczas uczenia modelu.
+
+# Modyfikacje danych
+
+## Dodanie zmiennych
+
+W trakcie pracy nad ramką danych dodaliśmy do niej trzy nowe kolumny. Po pierwsze, zauważmy, że w danych często pojawiały się nieunikalne wartości. W związku z tym postanowiliśmy umieścić w ramce danych liczbę pojawień się danego wiersza - `arrestCount`, ponieważ pomimo wielu braków w kolumnie daty zatrzymań, nowe wartości mogą przybliżać faktyczną liczbę aresztowań.  Po drugie, postanowiliśmy zamienić kolumny `c_jail_in` i `c_jail_out` na kolumnę `jailLength`, ponieważ długość ograniczenia wolności może mieć w o wiele większym stopniu wpływ na recydywizm niż data zatrzymania. Ostatecznie postanowiliśmy zastąpić kolumny `juvMisd`, `juvFel`, `juvOther` kolumną `juvSum`.
+
+```{r}
+d <- df
+d <- d %>% mutate(juvSum = juvMisd + juvFel + juvOther) %>% select(-c(juvMisd, juvFel, juvOther))
+d <- d %>% select(-c(caseNumber, ageCat))
+d <- d[c(1:6, 8:10, 7)]
+```
+
+## Grupowanie 
+
+Pogrupowaliśmy zmienne `chargeDegree`, `chargeDesc` i `race`, aby ograniczyć liczbę poziomów o niewielkiej liczbie wystąpień.
+
+```{r}
+set.seed(1)
+
+d$chargeDegree <- fct_lump(d$chargeDegree, 7) 
+d$chargeDesc <- fct_lump(d$chargeDesc, 17) 
+d$race <- fct_lump(d$race, 3)
+knitr::kable(table(d$chargeDegree))
+knitr::kable(table(d$chargeDesc))
+knitr::kable(table(d$race))
+```
+
+## Podział danych
+
+Podzieliliśmy dane na zbiór treningowy i testowy (70%/30%). Kodowanie oraz standaryzację zmiennych z zbioru treningowego zastosowaliśmy na zbiorze testowym.
+
+```{r}
+set.seed(1234)
+m <- sample(7850,5495)
+train <- d[m,]
+test <- d[-m,]
+```
+
+## Kodowanie i standaryzacja
+
+Wartości w kolumnach `chargeDegree` i `chargeDesc` zamieniliśmy na numeryczne, przyporządkowując im wagi określające, jaki jest stosunek recydywistów w danej grupie. Postanowiliśmy zdyskretyzować kolumnę `jailLength`, ponieważ w formie numerycznej miała ona zerową korelację z `isRecid`. Stworzonym w ten sposób przedziałom też przyporządkowaliśmy wagi.
+
+```{r}
+tmp <- split(train, f = train$isRecid) # dane zebrane z train, zastosowane potem na test
+
+c0 <- tmp$`0`$chargeDegree %>% summary() %>% as.data.frame() 
+c1 <- tmp$`1`$chargeDegree %>% summary() %>% as.data.frame() 
+w <- data.frame(c0,c1) 
+colnames(w) <- c( "zero","jeden") 
+w2 <- w %>% mutate(chargeDegreeRatio = jeden/(zero+jeden)) 
+w2$chargeDegree <- rownames(w)
+
+train <- train %>% left_join(select(w2, chargeDegree, chargeDegreeRatio), by = c("chargeDegree")) %>% select(-chargeDegree)
+test <- test %>% left_join(select(w2, chargeDegree, chargeDegreeRatio), by = c("chargeDegree")) %>% select(-chargeDegree)
+
+c0 <- tmp$`0`$chargeDesc %>% summary() %>% as.data.frame() 
+c1 <- tmp$`1`$chargeDesc %>% summary() %>% as.data.frame() 
+w <- data.frame(c0,c1) 
+colnames(w) <- c( "zero","jeden") 
+w2 <- w %>% mutate(chargeDescRatio = jeden/(zero+jeden)) 
+w2$chargeDesc <- rownames(w)
+
+train <- train %>% left_join(select(w2, chargeDesc, chargeDescRatio), by = c("chargeDesc")) %>% select(-chargeDesc)
+test <- test %>% left_join(select(w2, chargeDesc, chargeDescRatio), by = c("chargeDesc")) %>% select(-chargeDesc)
+
+train$jailLength <- arules::discretize(train$jailLength, method = "fixed",
+                                       breaks = c(1,2,5,15,26,61,121,300,Inf), include.lowest= TRUE)
+test$jailLength <- arules::discretize(test$jailLength, method = "fixed",
+                                      breaks = c(1,2,5,15,26,61,121,300,Inf), include.lowest= TRUE)
+
+tmp <- split(train, f = train$isRecid)
+
+c0 <- tmp$`0`$jailLength %>% summary() %>% as.data.frame() 
+c1 <- tmp$`1`$jailLength %>% summary() %>% as.data.frame() 
+w <- data.frame(c0,c1) 
+colnames(w) <- c( "zero","jeden") 
+w2 <- w %>% mutate(jailLengthRatio = jeden/(zero+jeden)) 
+w2$jailLength <- rownames(w)
+
+train <- train %>% left_join(select(w2, jailLength, jailLengthRatio), by = c("jailLength")) %>% select(-jailLength)
+test <- test %>% left_join(select(w2, jailLength, jailLengthRatio), by = c("jailLength")) %>% select(-jailLength)
+
+select(train, chargeDescRatio, chargeDegreeRatio, jailLengthRatio, juvSum, arrestCount)
+```
+
+```{r  fig.width=9, fig.height=6, fig.align='center', cache = TRUE}
+temp <- select(train, juvSum, chargeDegreeRatio, chargeDescRatio, jailLengthRatio, isRecid)
+temp$isRecid <- as.factor(temp$isRecid)
+
+plot1 <- ggplot(temp, aes(x = juvSum, fill = isRecid, color = isRecid)) +
+        geom_histogram(alpha = 0.4, bins = 7) + scale_y_log10()
+plot2 <- ggplot(temp, aes(x = chargeDegreeRatio, fill = isRecid, color = isRecid)) +
+        geom_histogram(alpha = 0.4, bins = 7) + scale_y_log10()
+plot3 <- ggplot(temp, aes(x = chargeDescRatio, fill = isRecid, color = isRecid)) +
+        geom_histogram(alpha = 0.4, bins = 7) + scale_y_log10()
+plot4 <- ggplot(temp, aes(x = jailLengthRatio, fill = isRecid, color = isRecid)) +
+        geom_histogram(alpha = 0.4, bins = 7) + scale_y_log10()
+
+(plot1 + plot2)/(plot3 + plot4)
+```
+
+Wystandaryzowaliśmy kolumny numeryczne.
+
+```{r}
+train$isRecid <- as.factor(train$isRecid)
+test$isRecid <- as.factor(test$isRecid)
+
+preProcValues <- preProcess(train, method = c("center", "scale"))
+
+trainTransformed <- predict(preProcValues, train)
+testTransformed <- predict(preProcValues, test)
+```
+
+Na zmiennych kategorycznych zastosowaliśmy one hot encoding.
+
+```{r}
+train <- select(createDummyFeatures(trainTransformed, target = "isRecid"), -sex.Female)
+test <- select(createDummyFeatures(testTransformed, target = "isRecid"), -sex.Female)
+colnames(train)[colnames(train) == "sex.Male"] <- "sex"
+colnames(test)[colnames(test) == "sex.Male"] <- "sex"
+```
+
+## Korelacje zmiennych
+
+```{r cache = TRUE}
+DataExplorer::plot_correlation(train)
+```
+
+Na wykresie korelacji widać szczególnie silną zależność pomiędzy kolumną celu, a `arrestCount`. Dodane `juvSum`, `jailLengthRatio`, `chargeDescRatio` i `chargeDegreeRatio` wykazują podobną, pomocną korelacje co istniejące wcześniej `age`, `priors` i `race`.
+
+# Modele
+
+Na tak przygotowanej ramce danych porównujemy wyniki modeli `SVM`, `randomForest` oraz `GBM`.
+
+```{r}
+cv <- makeResampleDesc("CV", iters = 5L)
+ctrlRandom <- makeTuneControlRandom(maxit = 400L)
+trainTask <- makeClassifTask(id = "task", data = train, target = "isRecid")
+```
+
+## `SVM`
+
+```{r eval = FALSE}
+svmLearn <- makeLearner("classif.svm", predict.type = "prob")
+
+svmPs <- makeParamSet(
+  makeNumericParam("cost", lower = -7, upper = 7, trafo = function(x) 2^x),
+  makeNumericParam("gamma", lower = -7, upper = 7, trafo = function(x) 2^x)
+)
+
+svmRes <- tuneParams(svmLearn, task = trainTask, measures = auc,
+                   resampling = cv, par.set = svmPs, control = ctrlRandom)
+
+write.csv(svmRes$x, "svmRes.csv", row.names = FALSE)
+```
+
+```{r}
+svmLearn <- makeLearner("classif.svm", predict.type = "prob")
+
+parameters <- list("cost" = 0.0835, "gamma" = 0.00936)
+lrn1 <- setHyperPars(svmLearn, par.vals = parameters)
+
+r1 <- resample(lrn1, trainTask, cv, measures = list(auc, acc))
+
+model1 <- train(lrn1, trainTask)
+results1 <- predict(model1, newdata = test)
+```
+
+```{r}
+temp <- performance(results1, list(auc,acc))
+print(paste("Wynik na zbiorze uczącym:", round(r1$aggr[1],3), "AUC i", round(r1$aggr[2],3), "ACC."))
+print(paste("Wynik na zbiorze testowym:", round(temp[1],3), "AUC i", round(temp[2],3), "ACC."))
+
+
+```
+
+## `randomForest`
+
+```{r eval = FALSE}
+rfLearn <- makeLearner("classif.randomForest", predict.type = "prob")
+
+rfPs <- makeParamSet(
+  makeIntegerParam("ntree", lower = 500L, upper = 3000L),
+  makeIntegerParam("mtry", lower = 1L, upper = 20L),
+  makeIntegerParam("nodesize",lower = 1L, upper = 20L)
+)
+
+rfRes <- tuneParams(rfLearn, task = trainTask, measures = auc,
+                    resampling = cv, par.set = rfPs, control = ctrlRandom)
+
+write.csv(rfRes$x, "rfRes.csv", row.names = FALSE)
+```
+
+```{r}
+rfLearn <- makeLearner("classif.randomForest", predict.type = "prob")
+
+parameters <- list("ntree" = 2824, "mtry" = 2, "nodesize" = 20)
+lrn2 <- setHyperPars(rfLearn, par.vals = parameters)
+
+r2 <- resample(lrn2, trainTask, cv, measures = list(auc, acc))
+
+model2 <- train(lrn2, trainTask)
+results2 <- predict(model2, newdata = test)
+```
+
+```{r}
+temp <- performance(results2, list(auc,acc))
+print(paste("Wynik na zbiorze uczącym:", round(r2$aggr[1],3), "AUC i", round(r2$aggr[2],3), "ACC."))
+print(paste("Wynik na zbiorze testowym:", round(temp[1],3), "AUC i", round(temp[2],3), "ACC."))
+```
+
+## `GBM`
+
+```{r eval = FALSE}
+gbmLearn <- makeLearner("classif.h2o.gbm", predict.type = "prob")
+
+gbmPs <- makeParamSet(
+  makeIntegerParam("ntrees", lower = 40L, upper = 300L),
+  makeIntegerParam("max_depth", lower = 5L, upper = 30L),
+  makeNumericParam("learn_rate", lower = 0.0001, upper = 0.2),
+  makeIntegerParam("nbins", lower = 10L, upper = 30L)
+)
+
+gbmRes <- tuneParams(gbmLearn, task = trainTask, measures = auc,
+                    resampling = cv, par.set = gbmPs, control = ctrlRandom)
+
+write.csv(gbmRes$x, "gbmRes.csv", row.names = FALSE)
+```
+
+```{r results="hide"}
+gbmLearn <- makeLearner("classif.h2o.gbm", predict.type = "prob")
+
+parameters <- list("ntrees" = 79, "max_depth" = 5, "learn_rate" = 0.02435, "nbins" = 20)
+lrn3 <- setHyperPars(gbmLearn, par.vals = parameters)
+
+r3 <- resample(lrn3, trainTask, cv, measures = list(auc, acc))
+
+model3 <- train(lrn3, trainTask)
+results3 <- predict(model3, newdata = test)
+```
+```{r}
+temp <- performance(results3, list(auc,acc))
+print(paste("Wynik na zbiorze uczącym:", round(r3$aggr[1],3), "AUC i", round(r3$aggr[2],3), "ACC."))
+print(paste("Wynik na zbiorze testowym:", round(temp[1],3), "AUC i", round(temp[2],3), "ACC."))
+```
+
+Jak widzimy, najlepszy wynik (z marginalnymi różnicami) został osiągnięty przy użyciu modelu `GBM`, który uzyskał `81.5% AUC` na zbiorze testowym, przy `81% AUC` na zbiorze treningowym. Finalnie najlepszy model miał `0.766% ACC`, ale optymalizowaliśmy go pod kątem `AUC`. 
+
+## Porównanie strojenia losowego i optymalizacji bayesowskiej
+
+Na modelu `randomForest` wypróbowaliśmy także strojenie hiperparametrów optymalizacją bayesowską, aby sprawdzić, czy osiągniemy lepsze wyniki niż poprzez strojenie losowym przeszukiwaniem.
+
+```{r eval = FALSE}
+set.seed(123, "L'Ecuyer")
+
+rfPs <- makeParamSet(
+  makeIntegerParam("ntree", lower = 500L, upper = 3000L),
+  makeIntegerParam("mtry", lower = 1L, upper = 20L),
+  makeIntegerParam("nodesize",lower = 1L, upper = 20L)
+)
+
+rfL = makeSingleObjectiveFunction(name = "rf.tuning",
+                                   fn = function(x) {
+                                     lrn = makeLearner("classif.randomForest", par.vals = x)
+                                     resample(lrn, trainTask, cv3, show.info = FALSE)$aggr
+                                   },
+                                   par.set = rfPs,
+                                   noisy = TRUE,
+                                   has.simple.signature = FALSE,
+                                   minimize = TRUE
+)
+
+iters = 20
+
+ctrl = makeMBOControl()
+ctrl = setMBOControlTermination(ctrl, iters = iters)
+
+res = mbo(rfL, control = ctrl, show.info = FALSE)
+write.csv(res$x, "bayesRF.csv", row.names = FALSE)
+```
+
+```{r}
+parameters <- list("ntree" = 503, "mtry" = 3, "nodesize" = 12)
+lrn4 <- setHyperPars(rfLearn, par.vals = parameters)
+
+r4 <- resample(lrn4, trainTask, cv, measures = list(auc, acc))
+
+model4 <- train(lrn4, trainTask)
+results4 <- predict(model4, newdata = test)
+```
+
+```{r}
+temp <- performance(results4, list(auc,acc))
+print(paste("Wynik na zbiorze uczącym:", round(r4$aggr[1],3), "AUC i", round(r4$aggr[2],3), "ACC."))
+print(paste("Wynik na zbiorze testowym:", round(temp[1],3), "AUC i", round(temp[2],3), "ACC."))
+```
+
+Możemy zaobserwować prawie taki sam wynik, jak po strojeniu losowym parametrów. Optymalizacja bayesowska ma duży potencjał, ale różnica zatraca się przy większej liczbie iteracji przeszukiwania losowego.
+
+
+# Wyniki i podsumowanie
+
+Zbiór danych poddany niewielkiej obróbce zmiennych znacznie zwiększył swój potencjał do trenowania modelu. Szczególnie kolumna `arrestNumber` okazała się kluczowa i silnie związana z szansą na zostanie recydywistą. Spośród trenowanych modeli najlepiej sprawdza się model `GBM`, jednak również inne testowane przez nas rozwiązania, takie jak `randomForest` osiągały podobne wyniki `AUC` bliskie 82%.
+
+# Podział obowiązków
+
+* EDA - wspólnie
+* Przygotowanie pierwszej prezentacji - wspólnie
+* Szukanie nowych zmiennych - Hubert
+* Sprawdzanie odpowiedzi modelu na różnych podzbiorach zmiennych - Szymon
+* Testowanie dyskretyzacji zmiennych - Łukasz
+* Przygotowanie drugiej prezentacji - wspólnie
+* Strojenie hiperparametrów - Hubert i Szymon
+* Przygotowanie trzeciej prezentacji - Hubert i Szymon
+* Przygotowanie części tekstowej raportu - Łukasz
+* Przygotowanie części wizualnej raportu - Hubert i Łukasz
+* Przygotowanie kodu raportu - Hubert i Łukasz
+
+
+
+
