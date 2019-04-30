@@ -1,0 +1,262 @@
+---
+title: "PD4"
+author: "Szymon Maksymiuk"
+date: "16 April 2019"
+output: 
+  html_document:
+    df_print: paged
+    toc: true
+    toc_float: true
+    code_folding: hide
+    number_sections: true
+---
+
+```{r setup, warning=FALSE, message=FALSE}
+library(mlr)
+library(mlrMBO)
+library(DALEX)
+library(dplyr)
+library(OpenML)
+library(kableExtra)
+
+set.seed(1234)
+
+s <- sample(nrow(apartments_test), 0.7*nrow(apartments_test))
+train_apa <- apartments_test[s,]
+test_apa <- apartments_test[-s,]
+data <- getOMLDataSet(data.id = 37L)$data
+m <- sample(nrow(data), 0.7*nrow(data))
+train_dia <- data[m,]
+test_dia <- data[-m,]
+
+```
+
+# Wstep
+
+W tym raporcie przyjrze sie szerzej maszynie wektorów wspierajacych, a wiec algorytmowi `svm`. W pracy posluze sie glównie wiedza zaczerpnieta z artykulu http://pyml.sourceforge.net/doc/howto.pdf. Uzywac bede  pakietu `mlr` jako nakladki na `svm`.
+
+Jako zbiory danych przyjalem `apartments_test` dostepny w pakiecie `DALEX` oraz `diabets` dostepnym na OpenML (id 37), który jest w tym momnecie zbiorem z jedna z najwiekszych liczba przebiegów Wsród zbiorów z tej platformy. Pozowli to na calkiem ciekawy przeglad sytuacji, gdyz ten pierwszy zbiór bedzie przedmiotem zadania regresyjnego, podczas gdy drugi, klasyfikacyjnego. Podzielilem zbiory w proporcjach 7:3 chcac uniknac strojenia parametrów na danych testowych. 
+
+```{r cars}
+kable(head(train_apa)) %>%
+  kable_styling(bootstrap_options = c("striped", "hover", "condensed"))
+
+kable(head(train_dia)) %>%
+  kable_styling(bootstrap_options = c("striped", "hover", "condensed"))
+
+task_apa <- makeRegrTask(id = "apartments", data = train_apa, target = "m2.price")
+task_dia <- makeClassifTask(id = "diabets", data = train_dia, target = "class")
+```
+
+# Normalizacja
+
+
+We wspomnianym wyzej artykule niemaly fragment zostal poswiecony normalizacji zmiennych. Sprawdzmy wiec teze jakoby ten zabieg mial znaczenie dla efektywnosci modelu. Wytrenujmy model ustawiajac parametr odpowiadajacy za normalizacje na `FALSE`.
+
+## apartments - regresja
+
+### Przed normalizacja
+```{r}
+lrn_apa <- makeLearner("regr.svm", par.vals = list(scale = FALSE))
+model_apa <- train(lrn_apa, task_apa)
+preds_apa <- predict(model_apa, newdata = test_apa)
+performance(preds_apa, measures = list(mse, rmse))
+```
+
+Jak widzimy wynik nie powala, szczgólnie biorac po uwage, ze srednia wartosc zmiennej `apartemnts$m2.price` to ~3500.
+
+### Z normalizacja
+
+Sprawdzmy teraz jak poradzi sobie nasz model po znormalizowaniu zmiennych. Zadanie to nie jest w naszym przypadku trudne. Domyslna wartosc parametru `scale` to `TRUE` stad wystarczy po prostu wywolac model z rzeczonymi domyslnymi parametrami. 
+
+```{r}
+lrn_apa <- makeLearner("regr.svm")
+model_apa <- train(lrn_apa, task_apa)
+preds_apa <- predict(model_apa, newdata = test_apa)
+performance(preds_apa, measures = list(mse, rmse))
+```
+
+Wyniki mówia same za siebie. Normalizacja zmiennych kilkukrotnie zwiekszyla skutecznosc naszego modelu. Zdaje sie to potwerdzac slowa z artykulu przynajmniej w kontekscie regresji. 
+
+## diabets - klasyfikacja
+
+Sprawdzmy teraz czy klasyfkacja jest wrazliwa na normalizacje tak samo jak regresja. 
+
+### Przed normalizacja
+```{r}
+lrn_dia <- makeLearner("classif.svm", par.vals = list(scale = FALSE), predict.type = "prob")
+model_dia <- train(lrn_dia, task_dia)
+preds_dia <- predict(model_dia, newdata = test_dia)
+performance(preds_dia, measures = list(auc, acc))
+```
+
+
+Podobnie jak dla regresji, wyniki dla klasyfikacji bez normalizacji zmiennych sa co najmniej slabe. 
+
+
+### Z normalizacja
+
+```{r}
+lrn_dia <- makeLearner("classif.svm", predict.type = "prob")
+model_dia <- train(lrn_dia, task_dia)
+preds_dia <- predict(model_dia, newdata = test_dia)
+performance(preds_dia, measures = list(auc, acc))
+```
+
+Zadnym zaskoczeniem jest fakt duzej poprawy skutecznosci modelu. Oba powyzsze przyklady pokazuja jak wazne jest pamietanie o normalizacji zmiennych.
+
+# Optymalizacja hiperparametrów
+
+## Jadro
+
+Na poczatek dwa zdania o jadrze, gdyz to nie jest tak, ze slepo zostaje przy gaussowskim. Stosujemy zbiór `apartments`, który jak doskonale wiemy, miedzy innymi z Warsztaów Badwczych, jest zbiorem sztucznym z nieliniowymi zaleznosciami. Stad jadro liniowe odpada w przedbiegach. Dalsze rozwazania to jednak czysta demagogia. Po pierwsze nie mam pewnosci, ze nieliniowe zaleznosci w `apartments` sa wielomianowe, po drugie czesc artukulów rozplywa sie nad swietnoscia jadra gaussowskiego w ogólnym przypadku. Stad decyzja o zastosowaniu tegoz wlasnie rdzenia mojego modelu.
+
+## Optymalizacja Bayesowska
+
+Do optymalizacji uzyje pakietu `mlrMBO` dedykowanego tego rodzaju poszukiwaniom.
+
+```{r}
+par.set <- makeParamSet(
+  makeNumericParam("cost", 0, 30),
+  makeNumericParam("gamma", -10, 5, trafo = function(x) 2^x)
+)
+cv <- makeResampleDesc("CV", iters = 3L)
+ctrl <- makeMBOControl()
+ctrl <- setMBOControlTermination(ctrl, iters = 10)
+tune_ctrl <- makeTuneControlMBO(mbo.control = ctrl)
+```
+
+### apartments
+
+```{r message=FALSE, warning=FALSE}
+res_apa <- tuneParams(lrn_apa, task_apa, cv, par.set = par.set, control = tune_ctrl)
+lrn_apa_tuned <- setHyperPars(lrn_apa, par.vals = res_apa$x)
+model_apa_tuned <- train(lrn_apa_tuned, task_apa)
+preds_apa_tuned <- predict(model_apa_tuned, newdata = test_apa)
+performance(preds_apa_tuned, measures = list(mse, rmse))
+kable(data.frame(res_apa$x))
+```
+
+Wynik po optymalizacji hiperparametróW jest delikatnie lepszy, aczkolwiek nie mozna powiedziec, iz zmienil sie diametralnie.
+
+### diabets
+
+```{r message=FALSE, warning=FALSE}
+res_dia <- tuneParams(lrn_dia, task_dia, cv, par.set = par.set, control = tune_ctrl, measures = auc)
+lrn_dia_tuned <- setHyperPars(lrn_dia, par.vals = res_dia$x)
+model_dia_tuned <- train(lrn_dia_tuned, task_dia)
+preds_dia_tuned <- predict(model_dia_tuned, newdata = test_dia)
+performance(preds_dia_tuned, measures = list(auc, acc))
+kable(data.frame(res_dia$x))
+
+```
+
+Co ciekawe w tym wypadku strojenie hiperparametrów wplynelo negatywnie na wynik calego modelu.
+
+#Przed kontra po
+
+Czas na partie wykresów z uzyciem pakietu `DALEX`. Skupimy sie na Partial Dependency Plot.
+
+```{r echo=FALSE}
+regr_predict <- function(object, newdata) {pred <- predict(object, newdata=newdata)
+                                              response <- pred$data$response
+                                              return(response)}
+
+classif_predict <- function(object, newdata) {pred <- predict(object, newdata=newdata)
+                                              pred <- as.data.frame(pred$data)
+                                              response <- pred[,2]
+                                              return(response)}
+
+```
+
+## apartments
+
+### construction.year
+
+```{r}
+lrn_rf_apa <- makeLearner("regr.ranger")
+model_rf_apa <- train(lrn_rf_apa, task_apa)
+
+
+explainer <- DALEX::explain(model = model_apa, data = select(test_apa, -c(m2.price)), y = test_apa$m2.price,
+                                  predict_function = regr_predict, label = "default")
+
+explainer_tuned <- DALEX::explain(model = model_apa_tuned, data = select(test_apa, -c(m2.price)), y = test_apa$m2.price,
+                                  predict_function = regr_predict, label = "tuned")
+
+explainer_rf <- DALEX::explain(model = model_rf_apa, data = select(test_apa, -c(m2.price)), y = test_apa$m2.price,
+                                  predict_function = regr_predict, label = "rf")
+
+
+
+plot(variable_response(explainer, variable = "construction.year", type = "pdp"), 
+     variable_response(explainer_tuned, variable = "construction.year", type = "pdp"),
+     variable_response(explainer_rf, variable = "construction.year", type = "pdp"))
+
+
+```
+
+Doskonale widac, ze `svm` wykryl nieliniowa zaleznosc zmiennej `construction.year`. Smuci jedynie fakt, ze linie dla parametrów domyslnych oraz nastrojonych sa tak sobie bliskie.  Ciekawa jest jednak wyzszosc wektorów wspierajacych nad modelem drzewiastym, który równiez wykryl owa zaleznosc, jednak nie zrobil tego tak dobrze.
+
+```{r}
+
+plot(variable_response(explainer, variable = "surface", type = "pdp"), 
+     variable_response(explainer_tuned, variable = "surface", type = "pdp"),
+     variable_response(explainer_rf, variable = "surface", type = "pdp"))
+
+
+```
+
+## diabets
+
+### pedi
+```{r echo=FALSE}
+test_dia$class <- as.numeric(test_dia$class == "tested_positive") 
+train_dia$class <- as.numeric(train_dia$class == "tested_positive") 
+```
+
+
+```{r}
+lrn_rf_dia <- makeLearner("classif.ranger", predict.type = "prob")
+model_rf_dia <- train(lrn_rf_dia, task_dia)
+
+
+explainer <- DALEX::explain(model = model_dia, data = select(test_dia, -c(class)), y = test_dia$class,
+                                  predict_function = classif_predict, label = "default")
+
+explainer_tuned <- DALEX::explain(model = model_dia_tuned, data = select(test_dia, -c(class)), y = test_dia$class,
+                                  predict_function = classif_predict, label = "tuned")
+
+explainer_rf <- DALEX::explain(model = model_rf_dia, data = select(test_dia, -c(class)), y = test_dia$class,
+                                  predict_function = classif_predict, label = "rf")
+
+
+
+plot(variable_response(explainer, variable = "pedi", type = "pdp"), 
+     variable_response(explainer_tuned, variable = "pedi", type = "pdp"),
+     variable_response(explainer_rf, variable = "pedi", type = "pdp"))
+
+
+```
+
+
+```{r}
+plot(variable_response(explainer, variable = "mass", type = "pdp"), 
+     variable_response(explainer_tuned, variable = "mass", type = "pdp"),
+     variable_response(explainer_rf, variable = "mass", type = "pdp"))
+
+
+```
+
+
+
+W tym wypadku da sie zauwazyc wplyw strojenia parametrów na zachowanie sie modelu. Ciekawe jest jednak równiez porówanie `svm` do `ranger`. Responsywnosc dla tego pierwszego jest dosc gladka (w sensie empirycznym, nie analitycznym), podczas gdy w drugim wypadku krzywa ma wyrazne zeby.
+
+#Podsumowanie
+
+Pozwole sobie podsumowac prace w punktach
+
+* Normalizacja jest kluczowa dla efektywnej pracy z `svm`
+* Zauwazylem maly wplyw strojenia parametru na efektywnosci modelu. Obstawiam jednak, ze jest to natura wybranych przeze mnie zbiorów, dobrze dopasowuja sie one do modelu z parametrami domyslnymi.
+* `svm` bardzo ladnie wylapal zaleznosci pomiedzy zmiennymi podczas gdy `ranger` mial z tym problem. 
+* Moglem wczesniej zaczac robic prace domowe.
