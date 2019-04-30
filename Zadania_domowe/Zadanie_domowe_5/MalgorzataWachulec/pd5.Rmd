@@ -1,0 +1,172 @@
+---
+title: "Praca domowa #5"
+author: "Małgorzata Wachulec"
+date: "29/04/2019"
+output: 
+  html_document:
+    df_print: paged
+    toc: true
+    toc_float: true
+    code_folding: hide
+    number_sections: true
+---
+
+```{r setup, include=FALSE}
+# libraries
+library(titanic)
+library(DataExplorer)
+library(funModeling)
+library(mlr)
+library(ranger)
+library(rpart)
+library(rpart.plot)
+
+set.seed(123)
+
+# data preparation
+dataset <- titanic_train
+dataset <- drop_columns(dataset,c("PassengerId","Name","Ticket","Cabin"))
+dataset$Survived <- as.factor(as.character(dataset$Survived))
+dataset$Sex <- as.factor(dataset$Sex)
+dataset$Embarked <- as.factor(dataset$Embarked)
+dataset <- na.omit(dataset)
+
+# df_status(dataset)
+```
+
+# Wstęp 
+
+W tej pracy domowej omówiony będzie model ranger z pakietu mlr (modelu z właśnie tej biblioteki użyto w artykule). Porównane zostaną wyniki na różnych zestawach hiperparametrów: tych domyślnych, tych z artykułu oraz tych zoptymalizowanych przy użyciu random search, dla zbioru danych titanic. Hiperparametry modelu ranger, o których mowa w artykule to num.trees - liczba drzew decyzyjnych,  replace - wartość logiczna informująca o tym czy losujemy ze zwracaniem, sample.fraction - z jakiej części obserwacji losujemy, mtry - liczba zmiennych, którą bierzemy pod uwagę przy rozgałęzieniu drzewa oraz min.node.size - minimalny rozmiar węzła, zazwyczaj równy 1 dla klasyfikacji.
+
+Ze zbioru danych Titanic wycięte zostały kolumny zawierające informacje o imieniu, nazwisku, id pasażera, a także kolumny Ticket i Cabin jako, że nie powinny mieć wpływu na model lub nie zawierały istotnych informacji.
+
+# Skuteczność rangera z hiperparametrami z artykułu
+
+Wartości miar acc, auc i f1, uzyskanych za pomocą kroswalidacji to:
+
+```{r 1,cache=TRUE}
+task <- makeClassifTask(id = "task", data = dataset, target = "Survived")
+article <- makeLearner("classif.ranger", predict.type = "prob", par.vals = list(num.trees = 983,
+                                                                                replace = FALSE,
+                                                                                sample.fraction = 0.703,
+                                                                                mtry = 1,
+                                                                                min.node.size = 1))
+cv <- makeResampleDesc("CV", iters = 5)
+ra <- resample(article, task, cv,measures = list(mlr::acc, mlr::auc, mlr::f1),show.info = FALSE)
+ra$aggr
+```
+
+Dla porównania zobaczmy jak sprawdziły się hiperparametry domyślne i te otrzymane poprzez użycie random search.
+
+# Porównanie z rangerem z domyślnymi hiperparametrami i z wynikiem random search
+
+Dla hiperparametrów domyślnych mamy:
+
+```{r 2,cache=TRUE}
+default <- makeLearner("classif.ranger", predict.type = "prob")
+rd <- resample(default, task, cv,measures = list(mlr::acc, mlr::auc, mlr::f1),show.info = FALSE)
+rd$aggr
+```
+
+Choć acc jest większe, klasy mają zróżnicowane liczności stąd lepiej patrzeć na miarę auc, która jest wyższa dla modelu z hiperparametrami z artykułu niż z tymi domyślnymi.
+
+Dla hiperparametrów wybranych dzięki random search z 200 iteracjami mamy:
+
+```{r 3,cache=TRUE}
+#ranger_pars <- tuneParams(
+#  makeLearner("classif.ranger",predict.type = "prob"),
+#  subsetTask(makeClassifTask(id = "task", data = dataset, target = "Survived")),
+#  resampling = cv5,
+#  measures = mlr::auc,
+#  par.set = makeParamSet(
+#    makeDiscreteParam("num.trees", values = 1:1000),
+#    makeLogicalParam("replace"),
+#    makeNumericParam("sample.fraction", lower = 0, upper = 1),
+#    makeDiscreteParam("mtry", values = 1:5),
+#    makeDiscreteParam("min.node.size", values = 1:10)
+#  ),
+#  control = makeTuneControlRandom(maxit = 200)
+#)
+#saveRDS(ranger_pars,file="ranger_pars")
+ranger_pars <- readRDS("ranger_pars")
+tuned <- makeLearner("classif.ranger",predict.type = "prob",par.vals = ranger_pars$x)
+rt <- resample(tuned, task, cv,measures = list(mlr::acc, mlr::auc, mlr::f1),show.info = FALSE)
+rt$aggr
+```
+
+Auc uzyskane dla modelu domyślnego jest najwyższe z dotychczasowych, jednakże nie istnieją jeszcze pakiety, które umożliwiałyby narysowanine drzewa decyzyjnego tego modelu. By móc rozwiązać 3 i 4 podpunkt zadania domowego, muszę ponownie sprawdzić powyższe zależności, tym razem dla modelu rpart, który pozwala na wyświetlenie drzewa.
+
+# Porównanie modelu rpart z różnymi hiperparametrami
+```{r 4,cache=TRUE}
+# learners
+rpart_default<-makeLearner("classif.rpart",predict.type = "prob")
+rpart_article<-makeLearner("classif.rpart",predict.type = "prob",par.vals = list(cp=0,maxdepth=21,minbucket=12,minsplit=24))
+
+#rpart_pars <- tuneParams(
+#  makeLearner("classif.rpart",predict.type = "prob"),
+#  subsetTask(makeClassifTask(id = "task", data = dataset, target = "Survived")),
+#  resampling = cv5,
+#  measures = mlr::auc,
+#  par.set = makeParamSet(
+#    makeNumericParam("cp",lower = 0,upper = 1),
+#    makeDiscreteParam("maxdepth", values = 1:30),
+#    makeDiscreteParam("minbucket", values = 1:50),
+#    makeDiscreteParam("minsplit", values = 1:50)
+#  ),
+#  control = makeTuneControlRandom(maxit = 200)
+#)
+#saveRDS(rpart_pars,file="rpart_pars")
+rpart_pars <- readRDS("rpart_pars")
+rpart_tuned <- makeLearner("classif.rpart",predict.type = "prob",par.vals = rpart_pars$x)
+
+# resampling
+rpart_ra <- resample(rpart_article, task, cv,measures = list(mlr::acc, mlr::auc, mlr::f1),show.info = FALSE)
+rpart_rd <- resample(rpart_default, task, cv,measures = list(mlr::acc, mlr::auc, mlr::f1),show.info = FALSE)
+rpart_rt <- resample(rpart_tuned, task, cv,measures = list(mlr::acc, mlr::auc, mlr::f1),show.info = FALSE)
+```
+
+Wyniki modelu rpart dla hiperparametrów, które zasugerowano w artykule:
+
+```{r 5,cache=TRUE}
+rpart_ra$aggr
+```
+
+Wyniki modelu rpart dla hiperparametrów domyślnych:
+```{r 6,cache=TRUE}
+rpart_rd$aggr
+```
+
+Wyniki modelu rpart po tunningu hiperparametrów:
+```{r 7,cache=TRUE}
+rpart_rt$aggr
+```
+
+Najlepsze okazały się być hiperparametry wskazane w artykule.
+
+# Najlepsze drzewo
+```{r 8,cache=TRUE}
+best <- train(rpart_article,task)
+prp(best$learner.model, roundint = FALSE)
+```
+Warto zauważyć, że w powyższym drzewie wartości spełniające warunek w węźle znajdują się na lewo od niego, a te, które go nie spełniają - na prawo od niego. Wartości 0 i 1 widoczne na liściach tego drzewa to przypisana wartość kolumny Survived, którą przewidujemy. Możemy teraz zauważyć, że zmienne Parch i Embarked nie miały wpływu na ten model, a zmienna Sex była tu najistotniejsza.
+
+# Podział Gini i Information Gain
+
+Podział metodą Gini jest domyślnym podziałem, więc aby porównać metody podziału Gini i Information Gain wystarczy utworzyć nowy model z metodą Information Gain i porównać jego wyniki z tym już utworzonym. Oba modele będą mieć hiperparametry wskazane w artykule.
+
+Oto wyniki dla modelu rpart z metodą Information Gain:
+
+```{r 9,cache=TRUE}
+rpart_article_info <-makeLearner("classif.rpart",predict.type = "prob",par.vals = list(parms = list(split = 'information'),cp=0,maxdepth=21,minbucket=12,minsplit=24))
+rpart_ra_info <- resample(rpart_article_info, task, cv,measures = list(mlr::acc, mlr::auc, mlr::f1),show.info = FALSE)
+rpart_ra_info$aggr
+```
+
+W tym przypadku auc i acc modelu z domyślną metodę Gini były nieznacznie lepsze od tego z metoda Information Gain, więc nie widać dużego wpływu metody na jakość modelu. Sprawdźmy jeszcze, jak zmienił się proces decyzyjny modelu dla metody Information Gain:
+
+```{r 10,cache=TRUE}
+info <- train(rpart_article_info,task)
+prp(info$learner.model, roundint = FALSE)
+```
+
+Możemy zauważyć różnice, w kolejności występowania niektórych warunków, np. dla mężczyzn w poprzednim modelu kolejnym warunkiem był wiek, a w tym modelu jest to klasa, którą podróżowali. Dalej jednak najważniejszą zmienną jest kolumna Sex, a zmienne Parch i Embarked nadal są nieistotne.
