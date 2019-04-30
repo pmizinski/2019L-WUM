@@ -1,0 +1,224 @@
+---
+title: "PD 4"
+author: "Witold Merkel"
+date: "12 04 2019"
+output:
+  html_document:
+    df_print: paged
+    toc: true
+    toc_float: true
+    code_folding: hide
+    number_sections: true
+---
+
+```{r setup, include=FALSE}
+set.seed(1)
+knitr::opts_chunk$set(echo = TRUE)
+library(DALEX)
+library(randomForest)
+library(mlr)
+library(e1071)
+library(MLmetrics)
+credit_g <- read.csv('credit_g.csv')
+divide <- sample(1:length(credit_g[,1]), 750)
+credit_g_train <- credit_g[divide, ]
+credit_g_test <- credit_g[-divide, ]
+cv <- makeResampleDesc("CV", iters = 5)
+```
+
+# Wporowadzenie
+
+Celem tej pracy jest pokazanie procesu zapoznawczego z SVM (Support Vector Machine). Do wykonania tego zadania zdecydowałem się użyć zbioru z `openml` o nazwie `credit_g` oraz oczywiście `apartments` z pakietu `DALEX`. Dla pierwszego zbioru będę robił klasyfikację przewidującą klasę kredytową, a dla drugiego będę poprzez regresją przewidywał cenę mieszkania za metr kwadratowy.
+
+# Dopasowanie modeli
+
+## Regresja
+
+```{r}
+regr_task <- makeRegrTask(id = "task", data = apartments, target = "m2.price")
+regr_lrn <- makeLearner("regr.svm")
+model_regr <- mlr::train(regr_lrn, regr_task)
+predict_regr <- predict(model_regr, newdata = apartments_test, type='response')
+perf_regr <- performance(predict_regr, measures = list(rmse))
+perf_regr
+```
+
+## Klasyfikacja
+
+```{r}
+classif_task <- makeClassifTask(id = "task", data = credit_g_train, target = "class")
+classif_lrn <- makeLearner("classif.svm", predict.type = "prob")
+model_classif <- mlr::train(classif_lrn, classif_task)
+predict_classif <- predict(model_classif, newdata = credit_g_test, type='response')
+perf_classif <- performance(predict_classif, measures = list(acc))
+perf_classif
+```
+
+Powyżej dopasowujemy modele `SVM` z domyślnymi parametrami. Ustaliliśmy też w jaki sposób będziemy oceniać modele, mianowicie dla regresji użyjemy `RMSE` (Root Mean Square Error), aby mieć te same jednostki co szukana wartość, a dla klasyfikacji `ACC` (Accuracy).
+
+# Sprawdzenie służności uwag o skalowaniu danych
+
+Z dokumentacji wynika, że model svm ma argument `scale` domyślnie ustawiony na `TRUE`, więc dane są skalowane. Sprawdźmy co się stanie z jakością predykcji, jeżeli ustawimy ten parametr na `FALSE`. Skalowanie o jakim tu mowa to przekształcenie, tak aby średnia była 0, a wariancja 1.
+
+## Regresja
+
+```{r}
+regr_task_no <- makeRegrTask(id = "task", data = apartments, target = "m2.price")
+regr_lrn_no <- makeLearner("regr.svm", par.vals = list(scale = FALSE))
+model_regr_no <- mlr::train(regr_lrn_no, regr_task_no)
+predict_regr_no <- predict(model_regr_no, newdata = apartments_test, type='response')
+perf_regr_no <- performance(predict_regr_no, measures = list(rmse))
+perf_regr_no
+```
+
+## Klasyfikacja
+
+```{r}
+classif_task_no <- makeClassifTask(id = "task", data = credit_g_train, target = "class")
+classif_lrn_no <- makeLearner("classif.svm", predict.type = "prob", par.vals = list(scale = FALSE))
+model_classif_no <- mlr::train(classif_lrn_no, classif_task_no)
+predict_classif_no <- predict(model_classif_no, newdata = credit_g_test, type='response')
+perf_classif_no <- performance(predict_classif_no, measures = list(acc))
+perf_classif_no
+```
+
+## Wnioski
+
+Łatwo można zauważyć, że `Accuracy` spadło, co oznacza, że model jest gorszy. Widać też, że pierwiastek błędu średniokwadratowego wzrósł, co również mówi nam, że model się pogorszył. W związku z tym, że w tej pracy oprócz zapoznania się z `svm`chciałby znaleźć najlepszy zetaw hiperparametrów, będziemy szukać z pośród takich dla których `scale` jest ustawione na `TRUE`, czyli domyślnie. Widzimy zatem, że artykuł mówił prawdę o skalowaniu.
+
+# Szukanie najlepszego zestawów hiperparametrów
+
+Optymalizaje hiperparametrów wykonamy przy pomocy grid'a, punkty z niego będą wybierane losowo, aby spełnić założenia zadania. Po research'u doszedłem do wniosku, że najwiekszy sens ma skupienie się na trzech hiperparametrach: `cost`, `tolerance` i `gamma`.
+
+## Regresja
+
+```{r, cache=TRUE}
+params <- makeParamSet(
+  makeNumericParam("cost", lower = 0, upper = 3),
+  makeNumericParam("gamma", lower = 0.0001, upper = 1),
+  makeNumericParam("tolerance", lower = 0.0005, upper = 0.05))
+ctrl <- makeTuneControlRandom(maxit = 200)
+regression_best <- tuneParams("regr.svm", task = regr_task, resampling = cv,
+                 par.set = params, control = ctrl, show.info = FALSE, measures = list(rmse))
+regression_best
+regr_lrn_hyper <- makeLearner("regr.svm", par.vals = list(cost = regression_best$x$cost, gamma = regression_best$x$gamma,
+                                                          tolerance = regression_best$x$tolerance))
+model_regr_hyper <- mlr::train(regr_lrn_hyper, regr_task)
+```
+
+## Klasyfikacja
+
+```{r, cache=TRUE}
+classification_best <- tuneParams("classif.svm", task = classif_task, resampling = cv,
+                 par.set = params, control = ctrl, show.info = FALSE, measures = list(acc))
+classification_best
+classif_lrn_hyper <- makeLearner("classif.svm", predict.type = "prob",par.vals = list(cost = classification_best$x$cost, gamma = classification_best$x$gamma,
+                                                          tolerance = classification_best$x$tolerance))
+model_classif_hyper <- mlr::train(classif_lrn_hyper, classif_task)
+```
+
+Powyżej znajdujemy jak najlepsze parametry dla obu modeli oraz szkolimy modele z tymi parametrami.
+
+# randomForest
+
+W tym rozdziale zrobimy modele `randomForest`.
+
+## Regresja
+
+```{r}
+regr_lrn_rf <- makeLearner("regr.randomForest")
+model_regr_rf <- mlr::train(regr_lrn_rf, regr_task)
+predict_regr_rf <- predict(model_regr_rf, newdata = apartments_test, type='response')
+perf_regr_rf <- performance(predict_regr_rf, measures = list(rmse))
+perf_regr_rf
+```
+
+## Klasyfikacja
+
+```{r}
+classif_lrn_rf <- makeLearner("classif.randomForest", predict.type = "prob")
+model_classif_rf <- mlr::train(classif_lrn_rf, classif_task)
+predict_classif_rf <- predict(model_classif_rf, newdata = credit_g_test, type='response')
+perf_classif_rf <- performance(predict_classif_rf, measures = list(acc))
+perf_classif_rf
+```
+
+Jak widzimy, w obu przypadkach wyniki są gorsze od tych otrzymanych dzięki strojeniu hiperparametrów dla `SVM`, jednak warto przyjżeć się bliżej temu co się dzieje.
+
+# Porównanie wyników przy użyciu biblioteki DALEX
+
+Najpierw musimy stworzyć explainery dla każdego modelu, a dopiero potem będziemy w stanie robić wykresy.
+
+## Tworzenie expleinerów
+
+```{r}
+custom_predict <- function(object, newdata) {pred <- predict(object, newdata=newdata)
+                                              response <- pred$data$response
+                                              return(response)}
+regr_explainer <- explain(model_regr, data = apartmentsTest, y = apartmentsTest$m2.price, predict_function = custom_predict, label = 'svm')
+regr_explainer_hyper <- explain(model_regr_hyper, data = apartmentsTest, y = apartmentsTest$m2.price, predict_function = custom_predict, label = 'svm_hyper')
+regr_explainer_rf <- explain(model_regr_rf, data = apartmentsTest, y = apartmentsTest$m2.price, predict_function = custom_predict, label = 'rf')
+```
+
+```{r}
+custom_predict_classif <- function(object, newdata) {pred <- predict(object, newdata=newdata)
+                                              response <- pred$data[,3]
+                                              return(response)}
+classif_explainer <- explain(model_classif, data = credit_g_test, y = credit_g_test$class, predict_function = custom_predict_classif, label = 'svm')
+classif_explainer_hyper <- explain(model_classif_hyper, data = credit_g_test, y = credit_g_test$class, predict_function = custom_predict_classif, label = 'svm_hyper')
+classif_explainer_rf <- explain(model_classif_rf, data = credit_g_test, y = credit_g_test$class, predict_function = custom_predict_classif, label = 'rf')
+```
+
+## PDP
+
+### Regresja
+
+```{r}
+regr_pdp <- variable_response(regr_explainer, variable = "surface", type = "pdp")
+regr_pdp_hyper <- variable_response(regr_explainer_hyper, variable = "surface", type = "pdp")
+regr_pdp_rf <- variable_response(regr_explainer_rf, variable = "surface", type = "pdp")
+plot(regr_pdp, regr_pdp_hyper, regr_pdp_rf)
+```
+
+### Klasyfikacja
+
+```{r}
+classif_pdp <- variable_response(classif_explainer, variable = "age", type = "pdp")
+classif_pdp_hyper <- variable_response(classif_explainer_hyper, variable = "age", type = "pdp")
+classif_pdp_rf <- variable_response(classif_explainer_rf, variable = "age", type = "pdp")
+plot(classif_pdp, classif_pdp_hyper, classif_pdp_rf)
+```
+
+## ALE
+
+### Regresja
+
+```{r}
+regr_ale <- variable_response(regr_explainer, variable = "construction.year", type = "ale")
+regr_ale_hyper <- variable_response(regr_explainer_hyper, variable = "construction.year", type = "ale")
+regr_ale_rf <- variable_response(regr_explainer_rf, variable = "construction.year", type = "ale")
+plot(regr_ale, regr_ale_hyper, regr_ale_rf)
+```
+
+### Klasyfikacja
+
+```{r}
+classif_ale <- variable_response(classif_explainer, variable = "credit_amount", type = "ale")
+classif_ale_hyper <- variable_response(classif_explainer_hyper, variable = "credit_amount", type = "ale")
+classif_ale_rf <- variable_response(classif_explainer_rf, variable = "credit_amount", type = "ale")
+plot(classif_ale, classif_ale_hyper, classif_ale_rf)
+```
+
+## Rozkład rezydułów
+
+### Regresja
+
+```{r}
+plot(model_performance(regr_explainer), model_performance(regr_explainer_hyper), model_performance(regr_explainer_rf))
+```
+
+# Podsumowanie
+
+Widać z wyników otrzymanych przez konkretne modele, że strojenie hiperparametrów niewiele pomogło, co raczej jest logiczne, ponieważ ktoś myślał jak ustawiał domyślne oraz głównie dlatego, że w testach nie mogłem umieścić za dużych wartości czy dużej ilości prób ze względu na ograniczenia technologiczne.
+
+Na wykresach widać, że `randomForest` działa inaczej niż `svm`. Widoczne również jest to że dwa przypadki `svm` są do siebie bardzo podobne w przypadku regresji, ale już nie aż tak podobne w przypadku klasyfikacji.

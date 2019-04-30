@@ -1,0 +1,11 @@
+base
+dplyr
+ggplot2
+reshape2
+ggthemes
+scales
+DataExplorer
+corrplot
+minerva
+bindrcpp
+multipanelfigure

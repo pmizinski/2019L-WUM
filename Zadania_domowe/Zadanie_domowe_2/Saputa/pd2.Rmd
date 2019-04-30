@@ -1,0 +1,128 @@
+---
+title: "ML PD2"
+author: "Karol Saputa"
+date: "Marzec 18, 2019"
+output: 
+  html_document:
+    theme: spacelab
+    self_contained: yes
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(readr)
+library(dplyr)
+library(ggplot2)
+library(vtreat)
+library(mlr)
+library(forcats)
+allegro <- readr::read_csv("allegro-api-transactions.csv")
+categories <-readr::read_csv2("allegro-categories-eng.txt")
+df <- dplyr::left_join(allegro, categories, by = "main_category")
+df$main_category <- as.factor(df$main_category)
+df$categories <- as.factor(df$categories)
+```
+
+# Wykorzystanie narzędzi R do przetwarzania zmiennych kategorycznych o wielu poziomach
+Wiele poziomów zmiennej prowadzi do problemów statystycznych oraz problemów implementacyjnych np. ze względu na ograniczenia pakietów do uczenia maszynowego na liczbę poziomów [1, str. 2]
+
+## Impact encoding - ilościowa zmienna przewidywana [2]
+Ustalamy proces kodowania: ramkę danych, kolumny do wykonania operacji, zmienną celu.
+```{r}
+treatment <- vtreat::designTreatmentsN(dframe = df,
+                                       varlist = colnames(df),
+                                       outcomename = 'price',
+                                       verbose = FALSE)
+```
+Ustalamy zmienne do wykonania kodowania.
+```{r}
+scoreFrame = treatment$scoreFrame
+vars <- scoreFrame$varName[(scoreFrame$code %in% c("catN", "clean"))]
+```
+Kodujemy zmienne.
+```{r}
+treated_data = vtreat::prepare(df,
+                               treatmentplan = treatment,
+                               varRestriction = vars)
+```
+Przykładowy efekt dla zmiennej `main_category`.
+```{r}
+df2 <- cbind(treated_data, main_category = df$main_category)
+ggplot(df2) + 
+  geom_point(aes(x = reorder(main_category, main_category_catN), y = main_category_catN)) +
+  theme(axis.text.x = element_text(angle = 90, hjust = 1)) + labs(title = "Impact factor dla kolejnych poziomów zmiennej main_category") + xlab("Kategoria") + ylab("Wartość")
+```
+
+## Impact encoding - jakościowa zmienna przewidywana [3]
+```{r}
+df$it_is_allegro_standard <- as.factor(df$it_is_allegro_standard)
+treatment <- vtreat::designTreatmentsC(dframe = df,
+                                       varlist = colnames(df),
+                                       outcomename = 'it_is_allegro_standard',
+                                       outcometarget = 1,
+                                       verbose = FALSE)
+scoreFrame = treatment$scoreFrame
+scoreFrame$code
+vars <- scoreFrame$varName[(scoreFrame$code %in% c("catB", "clean"))]
+
+treated_data = vtreat::prepare(df,
+                               treatmentplan = treatment,
+                               varRestriction = vars)
+
+df2 <- cbind(treated_data, main_category = df$main_category)
+ggplot(df2) + 
+  geom_point(aes(x = reorder(main_category, main_category_catB), y = main_category_catB)) +
+  theme(axis.text.x = element_text(angle = 90, hjust = 1)) + xlab("Kategoria") + ylab("Wartość")
+```
+
+
+## One-hot encoding
+Poniżej widać nowe zmienne, które powstały w wyniku rozdzielenia poziomów zmiennej `main_category`.
+```{r}
+df_onehot <- mlr::createDummyFeatures(obj = df, target = "it_is_allegro_standard", cols = "main_category")
+colnames(df_onehot)
+```
+
+## Scalanie rzadko występujących poziomów do jednego
+Zmniejszenie liczby poziomów z 27 do 10 i jednym złączonym `Other`
+```{r}
+df_merged <- df
+df_merged$main_category <- forcats::fct_lump(df$main_category, 10)
+levels(df_merged$main_category)
+levels(df$main_category)
+```
+
+## Problem pojawienia się nowych wartości zmiennej kategorycznej (poza zbiorem testowym)
+Opis procesu i zastosowania znajduje się w [1, str. 24]. Przygotowany przy pomocy `vtreat` proces poprawy danych może zostać wykorzystany na zbiorze innych obserwacji, również gdy znajdują się w nim nowe poziomy zmiennej kategorycznej.
+```{r}
+length(levels(df$main_category))
+df %>% filter(main_category != "Zdrowie") -> df3
+length(levels(df3$main_category))
+
+df3$it_is_allegro_standard <- as.factor(df3$it_is_allegro_standard)
+treatment <- vtreat::designTreatmentsC(dframe = df3,
+                                       varlist = colnames(df3),
+                                       outcomename = 'it_is_allegro_standard',
+                                       outcometarget = 1,
+                                       verbose = FALSE)
+scoreFrame = treatment$scoreFrame
+scoreFrame$code
+vars <- scoreFrame$varName[(scoreFrame$code %in% c("catB", "clean"))]
+
+treated_data = vtreat::prepare(df,
+                               treatmentplan = treatment,
+                               varRestriction = vars)
+
+df2 <- cbind(treated_data, main_category = df$main_category)
+ggplot(df2) + 
+  geom_point(aes(x = reorder(main_category, main_category_catB), y = main_category_catB)) +
+  theme(axis.text.x = element_text(angle = 90, hjust = 1)) + xlab("Kategoria") + ylab("Wartość")
+```
+
+
+## Źródła
+
+1. [vtreat: a data.frame Processor for Predictive Modeling](https://arxiv.org/pdf/1611.09477.pdf)
+2. [Categorical-Features](https://github.com/Dpananos/Categorical-Features)
+3. [Variable Types](https://cran.r-project.org/web/packages/vtreat/vignettes/vtreatVariableTypes.html)
+

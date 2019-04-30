@@ -1,0 +1,234 @@
+---
+title: "Aleksandra Wichrowska Praca domowa 4"
+author: "Aleksandrea Wichrowska"
+date: "13 04 2019"
+output:
+  html_document:
+    df_print: paged
+    toc: true
+    toc_float: true
+    code_folding: hide
+    number_sections: true
+---
+
+```{r setup, include=FALSE, warning=FALSE}
+knitr::opts_chunk$set(warning=FALSE, message=FALSE, error=FALSE, cache=TRUE)
+
+library(knitr)
+library(mlr)
+library(DALEX)
+library(parallelMap)
+library(OpenML)
+library(gridExtra)
+parallelStartSocket(8)
+
+```
+
+
+# Dane 
+
+Testy będziemy przeprowadzać na dwóch zbiorach danych:
+
+ * apartments z pakietu DALEX - do regresji
+ 
+ * liver-disorders z bazy danych OpenML - do klasyfikacji
+ 
+```{r}
+dataset <- getOMLDataSet(data.name = "liver-disorders")
+liver <- dataset$data
+``` 
+
+# Apartments
+
+## Bazowy model svm
+
+Na początku zróbmy bazowy model svm dla tych danych
+
+```{r}
+cv <- makeResampleDesc("CV", iters = 5)
+regr_task <- makeRegrTask(id = "regr_task", data = apartments, target = "m2.price")
+```
+
+```{r}
+regr_learner <- makeLearner("regr.svm", predict.type = "response")
+regr_train <- train(learner = regr_learner, task = regr_task)
+r <- resample(regr_learner, regr_task, cv, measures = list(mse,rmse,mae), show.info = FALSE)
+r1 <- r$aggr
+r1
+```
+
+## Model bez normalizacji
+
+Domyślnie svm normalizuje dane. Sprawdźmy, jakie byłyby wyniki bez normalizacji.
+
+```{r}
+regr_learner <- makeLearner("regr.svm", predict.type = "response", par.vals = list(scale = FALSE))
+regr_train2 <- train(learner = regr_learner, task = regr_task)
+r <- resample(regr_learner, regr_task, cv, measures = list(mse,rmse,mae), show.info = FALSE)
+r2 <- r$aggr
+r2
+```
+
+Jakoś predykcji pogorszyła się znacząco, więc w dalszej części nie będziemy zmieniać domyślnej wartości `scale=TRUE`
+
+## Strojenie hiperparametrów
+
+Spróbujmy metod strojenia hiperparametrów w celu uzyskania jeszcze lepszych wyników. Chcemy minimalizować miarę RMSE.
+
+```{r}
+ps <- makeParamSet(
+  makeNumericParam("cost", lower = -5, upper = 5, trafo = function(x) 10^x),
+  makeNumericParam("gamma", lower = -5, upper = 5, trafo = function(x) 10^x)
+)
+ctrlRandom <- makeTuneControlRandom(maxit = 500)
+ctrlGrid <- makeTuneControlGrid(resolution = 30)
+```
+
+### Grid search
+
+```{r}
+res <- tuneParams(regr_learner, task = regr_task, measures = rmse,
+                  show.info = FALSE, resampling = cv, par.set = ps, control = ctrlGrid)
+
+lrn <- setHyperPars(regr_learner, par.vals = res$x)
+regr_train_gs <- train(learner = lrn, task = regr_task)
+r <- resample(lrn, regr_task, cv, measures = list(mse,rmse,mae))
+r3 <- r$aggr
+kable(data.frame(res$x))
+r3
+```
+
+### Random search
+
+```{r}
+res <- tuneParams(regr_learner, task = regr_task, measures = rmse,
+                  show.info = FALSE, resampling = cv, par.set = ps, control = ctrlRandom)
+
+regr_learner2 <- setHyperPars(regr_learner, par.vals = res$x)
+regr_train_rs <- train(learner = regr_learner2, task = regr_task)
+r <- resample(regr_learner2, regr_task, cv, measures = list(mse,rmse,mae))
+r4 <- r$aggr
+r4
+kable(data.frame(res$x))
+```
+
+Grid Search przyniósł oczekiwane rezultaty - miary błędów spadły.
+
+## Porównanie wyników 
+
+```{r}
+kable(data.frame(dane = r1, bez_normalizacji = r2, gridSearch = r3, randomSearch = r4))
+```
+
+## Partial Dependence Plot
+
+```{r}
+regr_task_ranger <- makeRegrTask(data = apartments, target = "m2.price")
+regr_learner_ranger <- makeLearner("regr.ranger", predict.type = "response")
+regr_train_ranger <- train(regr_learner_ranger, regr_task_ranger)
+```
+
+```{r}
+custom_predict <- function(object, newdata) {pred <- predict(object, newdata=newdata)
+                                              response <- pred$data$response
+                                              return(response)}
+```
+
+```{r}
+explainer <- explain(regr_train, data = apartmentsTest[,2:6], y = apartmentsTest$m2.price, predict_function = custom_predict, label = "przed")
+explainer_gs <- explain(regr_train_gs, data = apartmentsTest[,2:6], y = apartmentsTest$m2.price, predict_function = custom_predict, label = "po grid searchu")
+explainer_rs <- explain(regr_train_rs, data = apartmentsTest[,2:6], y = apartmentsTest$m2.price, predict_function = custom_predict, label = "po random searchu")
+explainer_ranger <- explain(regr_train_ranger, data = apartmentsTest[,2:6], y = apartmentsTest$m2.price, predict_function = custom_predict, label= "ranger")
+
+sv <- single_variable(explainer,variable =  "construction.year", type = "pdp")
+sv_gs <- single_variable(explainer_gs,variable =  "construction.year", type = "pdp")
+sv_rs<- single_variable(explainer_rs,variable =  "construction.year", type = "pdp")
+sv_ranger<- single_variable(explainer_ranger, variable =  "construction.year", type = "pdp")
+
+plot(sv,sv_gs,sv_rs,sv_ranger)
+```
+
+Jak widać po normalizacji i dostrojeniu hiperparametrów algorytm jest zbliżony do działania lasów losowych (regr.ranger).
+
+
+
+# liver-disorders
+
+## Bazowy model svm
+
+Na początku zróbmy bazowy model svm dla tych danych
+
+```{r}
+cv <- makeResampleDesc("CV", iters = 5)
+classif_task <- makeClassifTask(id = "classif_task", data = liver, target = "selector")
+```
+
+```{r}
+classif_learner <- makeLearner("classif.svm", predict.type = "prob")
+r <- resample(classif_learner, classif_task, cv, measures = list(acc, auc), show.info = FALSE)
+r1 <- r$aggr
+r1
+```
+
+## Model bez normalizacji
+
+Domyślnie svm normalizuje dane. Sprawdźmy, jakie byłyby wyniki bez normalizacji.
+
+```{r}
+classif_learner <- makeLearner("classif.svm", predict.type = "prob", par.vals = list(scale = FALSE))
+r <- resample(classif_learner, classif_task, cv, measures = list(acc, auc), show.info = FALSE)
+r2 <- r$aggr
+r2
+```
+
+Jakoś predykcji pogorszyła się znacząco, więc w dalszej części nie będziemy zmieniać domyślnej wartości `scale=TRUE`
+
+## Strojenie hiperparametrów
+
+Spróbujmy metod strojenia hiperparametrów w celu uzyskania jeszcze lepszych wyników. Chcemy minimalizować miarę RMSE.
+
+```{r}
+ps <- makeParamSet(
+  makeNumericParam("cost", lower = -5, upper = 5, trafo = function(x) 10^x),
+  makeNumericParam("gamma", lower = -5, upper = 5, trafo = function(x) 10^x)
+)
+ctrlRandom <- makeTuneControlRandom(maxit = 500)
+ctrlGrid <- makeTuneControlGrid(resolution = 30)
+```
+
+### Grid search
+
+```{r}
+res <- tuneParams(classif_learner, task = classif_task, measures = auc,
+                  show.info = FALSE, resampling = cv, par.set = ps, control = ctrlGrid)
+
+lrn <- setHyperPars(classif_learner, par.vals = res$x)
+r <- resample(lrn, classif_task, cv, measures = list(auc,acc))
+r3 <- r$aggr
+kable(data.frame(res$x))
+r3
+```
+
+### Random search
+
+```{r}
+res <- tuneParams(classif_learner, task = classif_task, measures = auc,
+                  show.info = FALSE, resampling = cv, par.set = ps, control = ctrlRandom)
+
+classif_learner2 <- setHyperPars(classif_learner, par.vals = res$x)
+r <- resample(classif_learner2, classif_task, cv, measures = list(acc,auc))
+r4 <- r$aggr
+r4
+kable(data.frame(res$x))
+```
+
+Wyniki zdecydowanie polepszyły się.
+
+
+## Porównanie wyników
+
+```{r}
+kable(data.frame(rawData = r1,normalizedData = r2, gridSearch = r3, randomSearch = r4))
+```
+
+

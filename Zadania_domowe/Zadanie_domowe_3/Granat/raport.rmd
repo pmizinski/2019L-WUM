@@ -1,0 +1,179 @@
+---
+title: "WUM PD3"
+author: "Bartłomiej Granat"
+date: "`r format(Sys.time(), '%d - %m - %Y')`"
+output:
+html_document:
+dane_print: paged
+toc: true
+toc_float: true
+code_folding: hide
+number_sections: true
+---
+  
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, cache = TRUE)
+
+library(dplyr)
+library(mlr)
+library(dummies)
+library(DataExplorer)
+library(data.table)
+library(stringr)
+
+
+
+```
+
+```{r echo = FALSE}
+#Funkcja do ewaluacji modelu
+mcls <- function(pred) {
+  cols <- paste0("prob.", pred$data$truth)
+  coli <- match(cols, colnames(pred$data))
+  N <- nrow(pred$data)
+  row <- 1:N
+  out <- as.numeric(pred$data[cbind(row, coli)])
+  out <- pmax(pmin(out, 1-1e-15), 1e-15)
+  return(-sum(log(out))/N)
+}
+```
+
+# Wstęp
+
+W poniższym raporcie została przeprowadzona inżynieria cech na zbiorze Walmartu z portalu Kaggle.
+
+Surowe dane:
+```{r echo = FALSE}
+data_pre <- fread("train.csv")
+head(data_pre)
+data_pre <- na.omit(data_pre)
+```
+
+Jak widać dane te nie są odpowiednie do zbudowania na nich klasyfikatora. Musimy więc pogrupować je według VisitNumber i stworzyć nowe zmienne.
+
+# Ewaluacja
+
+Do ewaluacji modelu wykorzystuję wzór:
+$-\frac{1}{N}\sum_{i=1}^N\sum_{j=1}^k y_{i,j} \log p_{i,j}$
+Gdzie $p_{i,j}$ jest prawdopodobieństwem, że rekord $i$ należy do klasy $j$, a $y_{i,j}$ wynosi 1, gdy rekord $i$ należy do klasy $j$ i 0 w przeciwnym przypadku.
+
+Stosuję go po podzieleniu zbioru na treningowy i testowy w celu obliczenia błędu.
+
+# Pierwsze dodane kolumny
+
+Na początku usunąłem wiersze z brakującymi wartościami i  pogrupowałem dane ze względu na $VisitNumber$. Utworzyłem kolumny oznaczające: typ wizyty, dzień wizyty, suma zakupionych artykułów, zmienna wskazująca, że podczas wizyty był zwracany towar, liczba unikalnych odwiedzonych działów oraz liczba unikalnych kupionych artykułów.
+
+```{r}
+data1 <- data_pre[, .(Type = TripType[1], Day = Weekday[1], ProductsNum = sum(ScanCount),
+                       DidReturn = any(ScanCount <0), 
+                       UniqueFinelines = length(unique(FinelineNumber)),
+                       UniqueProds = length(unique(Upc))), by = VisitNumber]
+head(data1)
+```
+
+Tak przygotowane dane podzieliłem na zbiór treningowy(60%) i testowy(40%) i wykorzystałem pakiet $ranger$ implementujący lasy losowe do uczenia modelu
+
+```{r}
+set.seed(123)
+n <- nrow(data1)
+ind <- sample(c(TRUE, FALSE), n, replace=TRUE, prob=c(0.6, 0.4))
+data1 <- as.data.frame(data1)
+data1$Day <- as.factor(data1$Day)
+data1$DidReturn <- as.factor(data1$DidReturn)
+train_data1 <- data1[ind, ]
+test_data1 <- data1[!ind, ]
+
+
+task <- makeClassifTask(id = "classif", data = train_data1, target = "Type")
+learner = makeLearner("classif.ranger", predict.type = "prob")
+
+trainer <- train(learner, task)
+pred1 <- predict(trainer, newdata = test_data1)
+mcls(pred1)
+```
+
+Jak widzimy widok na takich danych nie jest zadowalający. Zająłem się więc kolumną $DepartmentDescription$ z oryginalnej ramki danych
+
+# Onehot encoding
+
+Ponieważ wynik dla dodanych przeze mnie zmiennych nie był zadowalający postanowiłem spróbować zając się kolumną $DepartmentDescription$ oryginalnej ramki danych.
+
+Najpierw pogrupowałem część kategorii, aby zredukować ich całkowitą liczbę do około 10
+
+```{r}
+household <- c("HOUSEHOLD CHEMICALS/SUPP","INFANT CONSUMABLE HARDLINES",
+               "OFFICE SUPPLES","BEDDING","HORTICULTURE AND ACCESS",
+               "TOYS","ELECTRONICS","FURNITURE","PAINT AND ACCESSORIES",
+               "PETS AND SUPPLIES", "FABRICS AND CRAFTS","HOME MANAGEMENT",
+               "HOUSEHOLD PAPER GOODS","HARDWARE","AUTOMOTIVE",
+               "LAWN AND GARDEN","HOME DECOR","CAMERAS AND SUPPLIES",
+               "PLAYERS AND ELECTRONICS","MEDIA AND GAMING","LARGE HOUSEHOLD GOODS",
+               "CONCEPT STORES")
+groceries <- c("DSD GROCERY","DAIRY","CANDY, TOBACCO, COOKIES","FROZEN FOODS",
+               "COOK AND DINE","BAKERY","MEAT - FRESH & FROZEN",
+               "GROCERY DRY GOODS","SERVICE DELI","PRE PACKED DELI",
+               "COMM BREAD","SEAFOOD","LIQUOR,WINE,BEER")
+outwear <- c("BOYS WEAR","JEWELRY AND SUNGLASSES","ACCESSORIES",
+             "LADIESWEAR","SHEER HOSIERY","LADIES SOCKS","BRAS & SHAPEWEAR",
+             "SLEEPWEAR/FOUNDATIONS","SPORTING GOODS","OPTICAL FRAMES",
+             "SHOES","MENS WEAR","INFANT APPAREL","PLUS AND MATERNITY",
+             "GIRLS WEAR, 4-6X  AND 7-14","MENSWEAR","SWIMWEAR/OUTERWEAR",
+             "OPTICAL - LENSES")
+pharmacies <- c("PERSONAL CARE","BEAUTY","PHARMACY RX","HEALTH AND BEAUTY AIDS",
+                "PHARMACY OTC","BATH AND SHOWER")
+
+data_pre$DepartmentDescription[data_pre$DepartmentDescription %in% outwear] <- "OUTWEAR"
+data_pre$DepartmentDescription[data_pre$DepartmentDescription %in% groceries] <- "GROCERIES"
+data_pre$DepartmentDescription[data_pre$DepartmentDescription %in% household] <- "HOUSEHOLD"
+data_pre$DepartmentDescription[data_pre$DepartmentDescription %in% pharmacies] <- "PHARMACIES"
+```
+
+Następnie przy użyciu biblioteki $dummies$ wykonałem onehot encoding na tak zmienionej ramce
+
+```{r echo = FALSE}
+cols22 <- unique(data_pre$DepartmentDescription)
+dataDummy <- cbind(data_pre, dummy(data_pre$DepartmentDescription, sep = "."))
+colnames(dataDummy) <- c("TripType","VisitNumber","Weekday","Upc","ScanCount","DepartmentDescription","FinelineNumber", "HR.PHOTO", cols22[1:14])
+cols<-str_replace_all(colnames(dataDummy), c(" " = ".","-" = ".","&"="AND"))
+colnames(dataDummy) <- cols
+dataDummy$DepartmentDescription <- as.factor(dataDummy$DepartmentDescription)
+dataDummy <- as.data.table(dataDummy)
+head(dataDummy)
+
+```
+Następnie zsumowałem ilość produktów danego typu zakupionych podczas wizyty i zostawiłem wcześniejsze zmienne.
+
+```{r}
+data2 <-dataDummy[, .(Type = TripType[1], Day = Weekday[1], ProductsNum = sum(ScanCount),
+                                DidReturn = any(ScanCount <0),
+                                UniqueFinelines = length(unique(FinelineNumber)),
+                                UniqueProds = length(unique(Upc)),
+                                sum(HR.PHOTO), sum(BOOKS.AND.MAGAZINES),
+                                sum(CELEBRATION), sum(FINANCIAL.SERVICES),
+                                sum(GROCERIES), sum(HOUSEHOLD),
+                                sum(IMPULSE.MERCHANDISE), sum(OFFICE.SUPPLIES),
+                                sum(OPTICAL...FRAMES), sum(OTHER.DEPARTMENTS),
+                                sum(OUTWEAR), sum(PHARMACIES), sum(PRODUCE),
+                                sum(SEASONAL), sum(WIRELESS)), by = VisitNumber]
+head(data2)
+```
+
+Zastosowałem ten sam model co wcześniej
+
+```{r}
+data2 <- as.data.frame(data2)
+data2$Day <- as.factor(data2$Day)
+data2$DidReturn <- as.factor(data2$DidReturn)
+train_data2 <- data2[ind, ]
+test_data2 <- data2[!ind, ]
+
+
+task <- makeClassifTask(id = "classif", data = train_data2, target = "Type")
+learner = makeLearner("classif.ranger", predict.type = "prob")
+
+trainer <- train(learner, task)
+pred2 <- predict(trainer, newdata = test_data2)
+mcls(pred2)
+```
+
+Widzimy, że wynik jest o około $1/3$ lepszy co oznacza, że liczba kupionych produktów w danym dziale ma duży wpływ na typ wizyty klienta.
