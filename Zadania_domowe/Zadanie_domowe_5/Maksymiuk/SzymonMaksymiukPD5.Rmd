@@ -1,0 +1,148 @@
+---
+title: "PD5"
+author: "Szymon Maksymiuk"
+date: "7 May 2019"
+output: 
+  html_document:
+    df_print: paged
+    toc: true
+    toc_float: true
+    code_folding: hide
+    number_sections: true
+---
+
+```{r setup, warning=FALSE, message=FALSE}
+library(rpart)
+library(mlr)
+library(mlrMBO)
+library(DALEX)
+library(dplyr)
+library(OpenML)
+library(kableExtra)
+library(rpart.plot)
+
+set.seed(1234)
+
+
+s <- sample(nrow(titanic), 0.7*nrow(titanic))
+train_titanic <- select(titanic[s,], -c(country))
+test_titanic <- select(titanic[-s,], -c(country))
+
+
+```
+
+# Wstep
+
+W tym raporcie przyjrze sie szerzej drzewom, a konkretiej implementacji `rpart`. W pracy posluze sie glównie wiedza zaczerpnieta z artykulu https://arxiv.org/pdf/1802.09596.pdf, z którym szczesliwie spotkalem sie juz wczesniej. Jako wrappera uzyja pakietu `mlr`.
+
+Jako zbiór danych uzyje`titanic` dostepny w pakiecie `DALEX`. Zbiór ten jest przedmiotem zadania kasyfikacyjnego. Zajmijemy sie przewidywaniem czy osoba przetrwala rejs na Tytaniku. Podzielilem zbiór w proporcjach 7:3 chcac uniknac strojenia parametrów na danych testowych. Z oryginalnego zbiorór `titanic` usunalem kolumne `country` jako posiadajaca zbyt wiele unikalnych wartosci.
+
+```{r}
+kable(head(train_titanic)) %>%
+  kable_styling(bootstrap_options = c("striped", "hover", "condensed"))
+
+task <- makeClassifTask(id = "titanic", train_titanic, "survived")
+```
+
+# Parametry
+
+Na poczatek zapoznalem sie z parametrami, które bedziemy stroic, konkretniej z tym w jaki sposób wplywaja na model.
+
+* **cp** - parametr zlozonosci. Parametr ten definiuje minimalna zmiane czynnika niedopasowania, której nowy proponowany podzal musi dokonac aby pozostal zachowany. To znaczy, ze te podzialy, które zmniejsza ten poziom o mniej niz stanowi wartosci **cp**, sa odrzucane.
+
+* **maxdepth** - Oznacza maksymalna glebokosc kazdego wezla w ostatecznym drzewie, przy czym korzen ma zawsze glebokosc 0. Wartosci, wieksze niz 30 zwróca losowe wyniki na maszynach 32-bitowych.
+
+* **minbucket** - Minimalny rozmiar liscia. Jezeli nowy podzial zmniejszy liczbe osberwacji w lisciu ponizej tej wartosci to nie zostanie dokonany.
+
+* **minsplit** - Minimalna liczba obserwacji w wezle ponizej której nie wykonywane sa juz nowe podzialy.
+
+# Modele
+
+Wszystkie model bedziemy porównywac za pomoca dwóch metryk, **acc** oraz **auc**.
+
+## Parametry zaproponowane
+
+Sprawdzmy jak poradzi sobie model na parametrach zaproponowanych w artykule.
+
+```{r}
+set.seed(1234, "L'Ecuyer")
+lrn_param <- makeLearner("classif.rpart", par.vals = list(cp = 0, maxdepth = 21, minbucket = 12, minsplit = 24), predict.type = "prob")
+model_param <- train(lrn_param, task)
+preds <- predict(model_param, newdata = test_titanic)
+performance(preds, measures = list(auc, acc))
+```
+
+
+Jak widzimy model nie poradzil sobie najgorzej. Wynik auc w granicach 0.8 to calkiem przyzwoite i biznesowo akceptowalne rozwiazanie.
+
+## Parametry domyslne
+
+Sprawdzmy teraz parametry domyslne.
+
+```{r}
+set.seed(1234, "L'Ecuyer")
+lrn_def <- makeLearner("classif.rpart",  predict.type = "prob")
+model_def <- train(lrn_def, task)
+preds <- predict(model_def, newdata = test_titanic)
+performance(preds, measures = list(auc, acc))
+```
+
+Co ciekawe wynik jest jest niemal identyczny. Model jest wrecz delitaknie lepszy. Bardzo ciekawe odkrycie.
+
+## Losowe wyszukiwanie
+
+Sprawdzmy jeszcze losowe przeszukiwanie po zaproponowanej w artykule siatce parametrów.
+
+```{r message=FALSE, warning=FALSE}
+lrn_rand <- makeLearner("classif.rpart",  predict.type = "prob")
+
+par.set <- makeParamSet(
+  makeNumericParam("cp", 0, 1),
+  makeIntegerParam("maxdepth", 1, 30),
+  makeIntegerParam("minsplit", 1, 60),
+  makeIntegerParam("minbucket", 1, 60)
+)
+set.seed(1234, "L'Ecuyer")
+
+cv <- makeResampleDesc("CV", iters = 3L)
+ctrl <- makeTuneControlRandom(maxit = 500L)
+res <- tuneParams(lrn_rand, task, cv, par.set = par.set, control = ctrl)
+lrn_rand <- setHyperPars(lrn_rand, par.vals = res$x)
+model_rand <- train(lrn_rand, task)
+preds <- predict(model_rand, newdata = test_titanic)
+performance(preds, measures = list(auc, acc))
+kable(data.frame(res$x))
+```
+
+Wynik z losowo strojonymi parametrami okazal sie gorszy od poprzednich modeli.
+
+# Wizualizacja oraz reguly decyzyjne
+
+Zwizualizujmy teraz najlepsze drzewo, a wiec te z parametrami domyslnymi.
+
+```{r}
+prp(model_def$learner.model, roundint = FALSE)
+print(model_def$learner.model)
+```
+
+
+O ile mozna klócic sie o jakosc dostarczonego przez twórców pakietu `rpart` narzedzia do wyswietlenia regul to drzewo zostalo narysowane calkiem skladnie. Dodatkowo reguly moza równiez odczytac z obrazka.
+
+#Porównanie gini oraz information
+
+Jako juz `gini` jest domyslnym kryterium podzialu, model taki juz posiadamy. Zostal on nawet zilustrowany w poprzednim rozdziale. Musimy zatem stworzyc jedynie model z `information` jako kryterium podzialu.
+
+```{r}
+set.seed(1234, "L'Ecuyer")
+lrn_inf <- makeLearner("classif.rpart", parms = list(split = 'information'),  predict.type = "prob")
+model_inf <- train(lrn_inf, task)
+preds <- predict(model_inf, newdata = test_titanic)
+performance(preds, measures = list(auc, acc))
+```
+
+Co ciekawe wartosc `auc` wzrosla o okolo jedna setna. Porównajmy teraz wyglad drzewa oraz reguly decyzyjne.
+
+```{r}
+prp(model_inf$learner.model, roundint = FALSE)
+```
+Drzewo zbudwane za pomoca kryterium podzialu `information` jest bardziej zbalansowane. Trzeci poziom zamiast jednego wezla jak w przypadku `gini` zawiera trzy wezly. Powstala równiez druga regula dotyczaca zmiennej wiek.
