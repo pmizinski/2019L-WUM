@@ -1,0 +1,207 @@
+---
+title: PD5
+author: Bogdan Jastrzębski
+date: "30 kwietnia 2019"
+output: 
+  html_document:
+    toc: true
+    number_sections: true
+    toc_float: true
+    theme: "paper"
+---
+```{r, echo=FALSE, message=FALSE}
+library(rpart.plot)
+library(dplyr)
+```
+
+# Wstęp 
+
+W tej pracy przyjrzę się dostosowywaniu hiperparametrów drzew na przykładzie implementacji rpart (a także ctree).
+Testy zostaną przeprowadzone na zbiorze Titanic. 
+
+Porównamy skuteczności klasyfikatorów:
+
+- rpart z parametrami domyślnymi,
+
+- rpart z parametrami zaproponowanymi w poleconym artykule,
+
+- rpart z parametrami znalezionymi za pomocą grid search,
+
+- rpart z parametrami znalezionymi za pomocą random search,
+
+- ctree z parametrami domyślnymi,
+
+- ctree z parametrami znalezionymi za pomocą random search, 
+
+- ctree z parametrami znalezionymi za pomocą grid search.
+
+a także zbadamy różnicę między metodą podziału "Gini" i "Information Gain" dla drzew rpart i parametrów zaproponowanych przez artykuł.
+
+# Nota o zbiorze danych
+
+Zbiór Titanic to spis pasażerów Titanica, wraz z ich danymi oraz informacją, czy udało im się przetrwać historyczną katastrofę. 
+
+Każdy rekord posiada siedem cech:
+
+- klasa, którą pasażer podróżował,
+
+- płeć,
+
+- wiek,
+
+- liczba rodzeństwa/małżonków przebywających na pokładzie,
+
+- liczba rodziców/dzieci przebywających na pokładzie,
+
+- cena zapłacona z bilet,
+
+- port zaokrętowania,
+
+i oczywiście zmienną bool'owską informującą, czy pasażer przetrwał zatopienie statku, czyli wartość przez nas przewidywaną. 
+
+Zbiór został przygotowany tak, że nie ma braków danych.
+Całość liczy 1044 rekordy. 
+
+Zbiór został dodatkowo podzielony na części treningową i testową liczące 
+kolejno $\frac{4}{5}$ i pozostałą piątą część rekordów. 
+
+# Drzewa - opis badanych parametrów
+
+Parametry dostosowywane drzewa decyzyjnego implementacji rpart i ctree to kolejno:
+
+- cp/mincriterion - złożoność modelu, czyli ile razy musi poprawiać klasyfikację podział, by został wykonany,
+
+- maxdepth - maksymalna głębokość drzewa,
+
+- minbucket - minimalna liczba obserwacji w każdym liściu,
+
+- minsplit - minimalna liczba rekordów, by został wykonany podział.
+
+# Porównanie wyników
+
+Oto jak przedstawiają się wyniki modeli (na zbiorze testowym): 
+
+```{r, echo=FALSE}
+load("perform.rda")
+knitr::kable(perform, caption = "Model Performance")
+```
+
+
+Nowe parametry poprawiły skuteczność rpart o prawie 2.5% AUC, tym samym
+przewyższając wyniki "random search". Lepsze okazało się tylko wyszukiwanie przy pomocy "control grid". Warto tutaj zauważyć, że w przypadku ACC i F1 domyślne parametry okazały się znacząco lepsze.  
+
+Ctree z drugiej strony wydaje się działać domyślnie lepiej niż rpart. Także do ctree z "control grid" należy pierwsze miejsce w rankingu AUC.
+
+# Najlepsze modele - ekspozycja 
+
+W tej części spróbujemy przyjrzeć się najlepszym modelom i przedyskutujemy
+pobieżnie sposób ich działania. 
+
+Rpart z "control grid":
+
+```{r, echo=FALSE, warning=FALSE}
+load("models.rda")
+rpart.plot(model_ctrl$learner.model)
+```
+
+Zbudowane drzewo jest bardzo duże. Oto dla porównania rpart z parametrami z artykułu:
+
+```{r, echo=FALSE, warning=FALSE}
+rpart.plot(model_new_def$learner.model)
+```
+
+Jest zaledwie o pół procenta gorsze w rankingu AUC.
+
+Oto jak się przedstawia się kilka losowych zasad wyciągniętych z rpart ("control grid"):
+
+```{r, echo=FALSE, warning=FALSE}
+set.seed(123)
+rules <- rpart.rules(model_ctrl$learner.model)
+index <- sample(1:nrow(rules), 10, replace = FALSE) %>% sort
+knitr::kable(rules[index, 1:19],
+             row.names = FALSE,
+             col.names = colnames(rules)[1:19])
+```
+
+Jak widać największe znaczenie mają zmienne:
+
+- płeć,
+
+- klasa, którą podróżował pasażer,
+
+- wiek.
+
+Podział nie jest zadziwiający. 
+
+Oto jak przedstawiają się zasady rpart z parametrami z artykułu:
+
+```{r, echo=FALSE, warning=FALSE}
+rules_art <- rpart.rules(model_new_def$learner.model)
+knitr::kable(rules_art[,1:19],
+             row.names = FALSE,
+             col.names = colnames(rules_art)[1:19])
+```
+
+Jak widać początkowe zmienne podziału są takie same jak wyżej,
+dopiero przy czwartym podziale się różnią.
+
+# Porównanie metod podziału Gini i Information Gain
+
+W pakiecie rpart dostępne są dwie metody podziału "Gini" i "Information Gain", których działanie spróbujemy porównać.
+
+Na początek wydajność:
+
+```{r, echo=FALSE}
+load("perform_infg_gini.rda")
+knitr::kable(perform_infg_gini, caption = "Model Performance")
+```
+
+Metoda Gini zdecydowanie wygrywa. Przyjrzyjmy się budowie drzew:
+
+- Information Gain
+
+```{r, echo=FALSE, warning=FALSE}
+load("models_infg_gini.rda")
+rpart.plot(model_new_def_infg$learner.model)
+```
+
+- Gini
+
+```{r, echo=FALSE, warning=FALSE}
+rpart.plot(model_new_def_gini$learner.model)
+```
+
+W dziwny sposób model Gini osiągnął lepszy wynik pomimo tego, że jest mniej złożony. 
+Modele są dość podobne. Prawa część drzewa jest identyczna, lewa różni się, ale dopiero na
+czwartym poziomie. Możliwe, że model Information Gain jest przeuczony.
+
+
+# Podsumowanie
+
+Z powyższej pracy płyną następujące wnioski (które należy traktować z ograniczonym zaufaniem):
+
+- zaproponowane przez artykuł parametry są potencjalnie lepsze, pozwalają osiągnąć lepsze wyniki bez wykorzystywania metod przybliżania parametrów, które są kosztowne obliczeniowo (może mieć to znaczenie na większym zbiorze danych),
+
+- drzewa większe wcale nie muszą lepiej klasyfikować, a nawet mogą mieć gorsze osiągi,
+
+- metoda Gini jest potencjalnie lepsza od Information Gain.
+
+- drzewa ctree działają potencjalnie lepiej niż rpart
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
