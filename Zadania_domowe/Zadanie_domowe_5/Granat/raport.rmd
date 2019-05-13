@@ -1,0 +1,152 @@
+---
+title: "WUM PD nr 5"
+author: "Bartłomiej Granat"
+date: "`r format(Sys.time(), '%d - %m - %Y')`"
+output:
+  html_document:
+    dane_print: paged
+    toc: true
+    toc_float: true
+    code_folding: hide
+    number_sections: true
+---
+  
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, cache = TRUE)
+library(DALEX)
+library(mlr)
+library(DataExplorer)
+library(rpart.plot)
+set.seed(12)
+```
+
+
+# Wstęp
+
+W poniższej pracy przeanalizowany został wpływ doboru hiperparametróW parametrów na wyniki działania drzew z pakietu $rpart$. Powstała ona na podstawie artykułu https://arxiv.org/pdf/1802.09596.pdf. Zostaną porównane wyniki domyślnego modelu, modelu z parametrami z artykułu oraz random search. Na koniec porównane będą drzewa budowane z kryterium podziału Gini i Information Gain.
+
+# Zbiór
+
+```{r}
+head(titanic)
+introduce(titanic)
+data <- titanic
+
+data$gender <- as.numeric(data$gender)
+data$class <- as.numeric(data$class)
+data$embarked <- as.numeric(data$embarked)
+data$country <- as.numeric(data$country)
+
+data$survived <- as.factor(ifelse(data$survived == "no",1,0))
+```
+
+Porządkuje dane, a następnie dziele je na zbiór treningowy i testowy. Zmienną celu jest $survived$
+
+```{r}
+ind <- sample(dim(data)[1], round(0.7*dim(data)[1]))
+data_train <- data[ind,]
+data_test <- data[-ind,]
+```
+
+# Hiperarametry
+
+Hiperparametry, które będziemy się stali dopasowywać to:
+
+- cp - złożoność
+- maxdepth - maksymalna głębokość drzewa
+- minbucket - minimalny rozmiar liścia
+- minsplit - minimalna liczba obserwacji w węźle, przy której może zajść podział
+
+# Parametry z artykułu
+
+Tworzę drzewo dla parametrów proponowanych w artykule i badam jego accuracy i auc.
+
+```{r}
+task <- makeClassifTask("classif", data = data_train, target = "survived")
+learner1 <- makeLearner("classif.rpart", par.vals = list(cp = 0, maxdepth = 21, minbucket = 12, minsplit = 24), predict.type = "prob")
+
+train1 <- train(learner1, task)
+pred1 <- predict(train1, newdata = data_test)
+
+performance(pred1,measures = list(acc,auc))
+```
+
+# Parametry domyślne
+
+```{r}
+learner2 <- makeLearner("classif.rpart", predict.type = "prob")
+
+train2 <- train(learner2, task)
+pred2 <- predict(train2, newdata = data_test)
+
+performance(pred2,measures = list(acc,auc))
+```
+
+Widzimy dużo gorsze auc w przypadku parametrów domyślnych.
+
+# Random search
+
+```{r message=FALSE}
+ps <- makeParamSet(
+  makeNumericParam("cp", lower = 0.000001, upper = 0.2),
+  makeIntegerParam("maxdepth", lower = 2, upper = 30),
+  makeIntegerParam("minbucket", lower = 2, upper = 20),
+  makeIntegerParam("minsplit", lower = 2, upper = 80)
+)
+rdesc <- makeResampleDesc("CV", iters = 5)
+
+ctrl = makeTuneControlRandom(maxit = 1000L)
+
+res = tuneParams("classif.rpart", task = task, resampling = rdesc,
+                  par.set = ps, control = ctrl)
+
+lrn = setHyperPars(makeLearner("classif.rpart", predict.type = "prob"), par.vals = res$x) 
+m = train(lrn, task)
+p <- predict(m, newdata = data_train)
+perf <- performance(p,measures = list(acc,auc))
+```
+
+```{r}
+perf
+```
+
+Widzimy, że wynik jest lepszy przy 1000 iteracji random searcha, jednak korzyść jest niewielka. 
+
+
+Można wywnioskować, że cechy $age$, $gender$ i $class$ są najbardziej istotne przy klasyfikacji.
+
+# Kryterium podziału i wizualizacja
+
+## Gini (domyślne)
+
+Można wywnioskować, że cechy $age$, $gender$ i $class$ są najbardziej istotne przy klasyfikacji.
+
+```{r}
+par1 <- list(parms = list(split = "gini"))
+
+learner3 <- makeLearner("classif.rpart", par.vals = par1, predict.type = "prob")
+
+train3 <- train(learner3, task)
+pred3 <- predict(train3, newdata = data_test)
+
+performance(pred3,measures = list(acc,auc))
+
+rpart.plot(train3$learner.model, roundint = FALSE)
+```
+
+## Information Gain
+
+```{r}
+par2 <- list(parms = list(split = "information"))
+
+learner4 <- makeLearner("classif.rpart", par.vals = par2, predict.type = "prob")
+
+train4 <- train(learner4, task)
+pred4 <- predict(train4, newdata = data_test)
+
+performance(pred4,measures = list(acc,auc))
+
+rpart.plot(train4$learner.model, roundint = FALSE)
+```
+
+Widzimy identyczny wynik modelu dla takiego podziału na zbiór treningowy i testowy, jednak Information Gain tworzy prostsze drzewo.
