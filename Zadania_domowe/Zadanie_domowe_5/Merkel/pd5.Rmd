@@ -1,0 +1,354 @@
+---
+title: "PD 5"
+author: "Witold Merkel"
+date: "`r format(Sys.time(), '%d - %m - %Y')`"
+output:
+  html_document:
+    df_print: paged
+    toc: true
+    toc_float: true
+    code_folding: hide
+    number_sections: true
+---
+
+```{r setup, include=FALSE, cache=TRUE}
+knitr::opts_chunk$set(echo = TRUE)
+library(partykit)
+library(caret)
+library(rattle)
+library(ROCR)
+library(DALEX)
+library(dplyr)
+library(mlr)
+library(rpart)
+library(rattle)	
+library(rpart.plot)		
+set.seed(1)
+cv <- makeResampleDesc("CV", iters = 10)
+divide <- sample(1:length(titanic[,1]), 1600)
+titanic <- select(titanic, -c(country))
+titanic_train <- titanic[divide, ]
+titanic_test <- titanic[-divide, ]
+classif_task <- makeClassifTask(id = "task", data = titanic_train, target = "survived")
+
+################################### DOMYSLNE HIPERPARAMETRY ###########################################
+
+classif_lrn_raw <- makeLearner("classif.rpart", predict.type = "prob")
+model_classif_raw <- mlr::train(classif_lrn_raw, classif_task)
+predict_classif_raw <- predict(model_classif_raw, newdata = titanic_test, type='response')
+perf_classif_raw <- performance(predict_classif_raw, measures = list(auc, acc))
+
+form_raw <- as.formula(survived ~ .)
+tree_raw <- rpart(form_raw, data=titanic_train, control=rpart.control(minsplit = 20,cp = 0.01,
+                                                                      minbucket = 7, maxdepth = 30))
+
+################################### RANDOM SEARCH HIPERPARAMETRY ######################################
+
+params <- makeParamSet(
+  makeIntegerParam("minsplit", lower = 5, upper = 100),
+  makeIntegerParam("minbucket", lower = 2, upper = 100),
+  makeNumericParam("cp", lower = 0.001, upper = 0.8),
+  makeIntegerParam("maxdepth", lower = 1, upper = 30))
+
+ctrl <- makeTuneControlRandom(maxit = 2000)
+#best <- tuneParams("classif.rpart", task = classif_task, resampling = cv,
+#                              par.set = params, control = ctrl, show.info = FALSE, measures = list(acc))
+
+# raz zostało policzone z ustawionym seedem
+
+classif_lrn_hyper <- makeLearner("classif.rpart", predict.type = "prob",
+                                 par.vals = list("minsplit" = 7,
+                                  "minbucket" = 47,
+                                  "cp" = 0.006376359,
+                                  "maxdepth" = 15))
+
+model_classif_hyper <- mlr::train(classif_lrn_hyper, classif_task)
+predict_classif_hyper <- predict(model_classif_hyper, newdata = titanic_test, type='response')
+perf_classif_hyper <- performance(predict_classif_hyper, measures = list(auc, acc))
+
+################################### ARTYKUL HIPERPARAMETRY ###########################################
+
+classif_lrn_art <- makeLearner("classif.rpart", predict.type = "prob",
+                               par.vals = list("minsplit" = 13,
+                               "minbucket" = 5,
+                               "cp" = 0.002,
+                               "maxdepth" = 19))
+
+model_classif_art <- mlr::train(classif_lrn_art, classif_task)
+predict_classif_art <- predict(model_classif_art, newdata = titanic_test, type='response')
+perf_classif_art <- performance(predict_classif_art, measures = list(auc, acc))
+
+form_art <- as.formula(survived ~ .)
+tree_art <- rpart(form_art, data=titanic_train, control=rpart.control(minsplit = 13,cp = 0.002,
+                                                                minbucket = 5, maxdepth = 19))
+
+################################### POROWNANIE METODY BUDOWANIA #################################################
+
+# Gini
+
+tree_art_gini <- rpart(form_art, data=titanic_train, control=rpart.control(minsplit = 13,cp = 0.002,
+                                                                      minbucket = 5, maxdepth = 19),
+                                                                      parms = list(split = 'gini'))
+pred_gini <- predict(tree_art_gini, titanic_test, type="class")
+conf_gini <- confusionMatrix(pred_gini, titanic_test$survived)
+
+# Information
+
+tree_art_info <- rpart(form_art, data=titanic_train, control=rpart.control(minsplit = 13,cp = 0.002,
+                                                                      minbucket = 5, maxdepth = 19),
+                                                                      parms = list(split = 'information'))
+pred_info <- predict(tree_art_info, titanic_test, type="class")
+conf_info <- confusionMatrix(pred_info, titanic_test$survived)
+
+################################### CTREE #################################################
+
+classif_lrn_ctree <- makeLearner('classif.ctree', predict.type = 'prob')
+model_classif_ctree <- mlr::train(classif_lrn_ctree, classif_task)
+predict_classif_ctree <- predict(model_classif_ctree, newdata = titanic_test, type='response')
+perf_classif_ctree <- performance(predict_classif_ctree, measures = list(auc, acc))
+
+params1 <- makeParamSet(
+  makeIntegerParam("minsplit", lower = 5, upper = 100),
+  makeIntegerParam("minbucket", lower = 2, upper = 100),
+  makeNumericParam("mincriterion", lower = 0.5, upper = 0.99),
+  makeIntegerParam("maxdepth", lower = 0, upper = 50))
+
+#best1 <- tuneParams("classif.ctree", task = classif_task, resampling = cv,
+#                   par.set = params1, control = ctrl, show.info = FALSE, measures = list(acc))
+
+# raz zostało policzone z ustawionym seedem
+
+classif_lrn_ctree_best <- makeLearner('classif.ctree', predict.type = 'prob',
+                                      par.vals = list("minsplit" = 16,
+                                      "minbucket" = 23,
+                                      "mincriterion" = 0.5660783,
+                                      "maxdepth" = 30))
+model_classif_ctree_best <- mlr::train(classif_lrn_ctree_best, classif_task)
+predict_classif_ctree_best <- predict(model_classif_ctree_best, newdata = titanic_test, type='response')
+perf_classif_ctree_best <- performance(predict_classif_ctree_best, measures = list(auc, acc))
+
+###################################### DO RYSUNKU CTREE ################################################
+
+ctree_raw <- partykit::ctree(survived~.,data = titanic_train)
+```
+
+# Wprowadzenie
+
+Celem tego raportu jest przybliżenie drzew z pakietu `rpart`, wykorzystamy do tego klasyfikacje na zbiorze `titanic`. Będziemy przewidywać czy dany pasażer przeżył katastrofę czy też nie.
+
+Najpierw szybko opiszę te hiperparametry, które będziemy zmieniać (te o których jest mowa w artykule):
+
+* `minsplit` - minimalna liczba obserwacji, która musi występować w węźle, aby próbować go dalej dzielić,
+* `minbucket` - minimalna licza obserwacji w liściu drzewa,
+* `cp` - jeżeli podział nie poprawi jakości modelu o te wartość, to nie jest robiony,
+* `maxdepth` - maksymalna głębokość drzewa.
+
+W całym raporcie będziemy posługiwać się dwiema miarami równolegle: `acc` oraz `auc`.
+
+Przed przejściam do pracy sprawdźmy jak wygląda ramka danych.
+
+```{r}
+head(titanic)
+```
+
+# Zestaw hiperparametrów z artykułu
+
+W artykule napisane jest, że optymalny zestaw hiperparametrów to:
+
+* `minsplit` = 13,
+* `minbucket` = 5,
+* `cp` = 0.002,
+* `maxdepth` = 19.
+
+Model stworzony z takimi hiperparametrami osiąga następujace dokładności:
+
+```{r}
+perf_classif_art
+```
+
+# Zestaw hiperparametrów proponowany przez pakiet
+
+Defaultowe hiperparametry dla tego modelu są ustawione następujaco:
+
+* `minsplit` = 20,
+* `minbucket` = 7,
+* `cp` = 0.01,
+* `maxdepth` = 30.
+
+Model stworzony z takimi hiperparametrami osiąga następujace dokładności:
+
+```{r}
+perf_classif_raw
+```
+
+# Zestaw hiperparametrów otrzymany przez random search
+
+Do randomowego szukania hiperparametrów zastosowałem metodę znaną już z poprzedniej pracy domowej z 2000 prób. Zgodnie z podpowiedziami przedziały szukania optymalnych parametrów ustawiłem w taki sposób, żeby zawierały wartości domyślne. Wykonałem to pare razy, aby udoskonalić przedziały. Na przykład gdy jakaś wartość była przy krańcu przedziału to powiększałem go z tej strony.
+
+Hiperparametry otrzymane w ten sposób prezentują się następująco:
+
+* `minsplit` = 7,
+* `minbucket` = 47,
+* `cp` = 0.006376359,
+* `maxdepth` = 15.
+
+Model stworzony z takimi hiperparametrami osiąga następujace dokładności:
+
+```{r}
+perf_classif_hyper
+```
+
+# Omówienie najlepszego modelu
+
+Widzimy, z wartości `acc` i `auc`, że najlepszy jest model zbudowany na hiperparametrach proponowanych przez artykuł. Z pośród wszystkich 3, przoduje on jeżeli chodzi o jedną i drugą miarę zatem jest niekwestionowanym liderem.
+
+Zobaczmy jak wygląda podejmowanie decyzji w tym drzewie. Wykorzystamy do tego taką metodę, żeby reguły decyzyjne były widoczne nad każdym węzłem, który nie jest lisciem. Dzięki temu będziemy mogli łatwo sprawdzić, do którego liścia klasyfikuje się konkretny przypadek. Moim zdaniem jest to o wiele bardziej czytelne niż zwykłe wypisywanie decyzji po kolei.
+
+```{r, echo = FALSE}
+rpart.plot::prp(tree_art)
+```
+
+Sprawdźmy jednak jak wyglądają wypisane reguły decyzyjne.
+
+```{r}
+print(tree_art)
+```
+
+Patrząc na to jak ustawione są parametry proponowane przez artykuł, można sie domyślać, że będzie to rozbudowane drzewo.
+
+# Porównanie metody budowy drzewa
+
+W tym rozdziale sprawdzimy czym będą różniły się modele zbudowane na tych samych hiperparametrach, ale zachowujące się inaczej przy podziale. Jedno będzie zbudowane przy pomocy kryterium podziału Ginniego, a drugie przy pomocy Information Gain. Porównamy je na podstawie trzech rzeczy:
+
+* confussionMatrix,
+* tego jakie zmienne mają jaką ważność dla modelu,
+* jak zbudowane jest drzewo i jak wyglądają reguły decyzyjne.
+
+## Gini
+
+### Macierz
+
+Zobaczmy jak wygląda macierz konfuzji.
+
+```{r}
+conf_gini$table
+```
+
+Z tego łatwo można policzyć, że `ACC` to:
+
+```{r, echo=FALSE}
+(373+118)/(373+91+25+118)
+```
+
+### Ważność zmiennych
+
+Spójrzmy jak rozkłada się ważność poszczególnych zmiennych, jeżeli zbudujemy model w ten sposób.
+
+```{r}
+tree_art_gini$variable.importance
+```
+
+Widzimy, że w tym wypadku zdecydowanie najważniejsza jest płeć, potem to w której klasie była osoba, wiek danej osoby i ile zapłacono.
+
+### Drzewo decyzyjne
+
+Spójrzmy teraz czy jest różnica w konstrukcji drzewa decyzyjnego.
+
+```{r, echo = FALSE}
+rpart.plot::prp(tree_art_gini)
+```
+
+Widać, że węzły najbliższe korzenia się nie zmieniają, natomiast im idziemy głębiej w drzewo tym znajdujemy inną kolejność węzłów niż we wcześniejszym wypadku, wynika to z tego, że mamy teraz inne kryterium porównawcze.
+
+## Information Gain
+
+### Macierz
+
+Zobaczmy jak wygląda macierz konfuzji.
+
+```{r}
+conf_info$table
+```
+
+Z tego można łatwo policzyć, że `ACC` to:
+
+```{r}
+(370+124)/(370+85+28+124)
+```
+
+### Ważność zmiennych
+
+Spójrzmy jak rozkłada się ważność poszczególnych zmiennych, jeżeli zbudujemy model w ten sposób.
+
+```{r}
+tree_art_info$variable.importance
+```
+
+Widać, że kolejność ważności zmiennych pozosaje taka sama, za to jednak spada ważność każdej pojedyńczej zmiennej to znaczy, że przez to że bierzemy inne kryterium podziału to model staje się bardziej odporny.
+
+### Drzewo decyzyjne
+
+Spójrzmy teraz czy jest różnica w konstrukcji drzewa decyzyjnego.
+
+```{r, echo = FALSE}
+rpart.plot::prp(tree_art_info)
+```
+
+Znowu węzły najbliżej korzenia nie ulegają zmiany, w porównaniu do wyjściowego drzewa. Jednak w zestawieniu z poprzednim drzewem schodząc coraz niżej widzimy już diametralne zmiany w konstrukcji. Pokazuje to, że powinniśmy świadomie wybierać rodzaj podziału, najlepiej podporządkowująć to pod nasz problem.
+
+## Podsumowanie
+
+Widać, że modele różnią się od siebie. Pierwsza w oczy rzuca się różnica w `ACC`, w obu przypadkach wartości są większe niż dla ustawień domyślnych i jest różnica w wartościach jeżeli inaczej dzielimy drzewo.
+
+Ostatnią, dość łatwo zauważalną różnicą jest budowa drzewa i reguły decyzyjne. Po przyjrzeniu się im dokładniej można zauważyć, że domyślnym argumentem jest `gini`.
+
+# CTREE
+
+W tym rozdziale zwięźle opiszemu różnice międzu drzewem `rpart`, a `ctree` oraz porównamy wyniki otrzymane dzięki obu tym algorytmom w naszym problemie.
+
+## Opis różnicy w działaniu
+
+Podstawową różnicą pomiędzy `ctree`, a `rpart` jest to jakie zmienne są wybierane do podziału oraz to jak są dzielone. Klasyczne drzewa z `rpart` robią tak, żeby zmaksymalizować przyrost informacji, można wybrać jakiej, nawet robiliśmy to w tej pracy domowej. Natomiast `ctree` mają troche inne podejście, sprawdza poziom istotności różnych i permutacji podziału. Widać, że jest to znacząca różnica, może ona wpływać na to jakie wyniki będzie dawał konkretny algorytm.
+
+## Porównanie wydajności
+
+Spójrzmy jeszcze raz jakie wartości liczbowe uzyskiwał nasz najlepszy model.
+
+```{r}
+perf_classif_art
+```
+
+Teraz porównajmy to z tym jak spisuje się model oparty o `ctree`.
+
+```{r}
+perf_classif_ctree
+```
+
+## Drzewo decyzyjne
+
+Zobaczmy jak będzie wyglądać to drzewo.
+
+```{r}
+knitr::include_graphics("3.png")
+```
+
+## Podsumowanie
+
+Widać, że model `rpart` dał minimalnie wyższe `acc`, natomiast `ctree` dał już znacząco większe `auc`, można z tego wnioskować, że dla tego problemu lepiej jest używać `ctree`. Szczególnie należy się nad tym zastanowić, ponieważ tu porównaliśmy model (`ctree`) z domyślnie ustawionymi hiperparamterami, więc należałoby sprawdzić randomowym szukaniem najlepsze parametry.
+
+# PS
+
+Poszukajmy najlepszych parametrów dla `ctree` i sprawdźmy jak się on z nimi spisuje. Będziemy to robić metodą random search dla 2000 prób. Dla równowagi też będziemy tuningować 4 hiperparametry:
+
+* `minsplit` - minimalna "masa", aby rozważać dzielenie węzła,
+* `minbucket` - minimalna "masa" w liściu drzewa,
+* `mincriterion` - statystyka musi przekroczyć te wartość, aby było rozważane dzielenie,
+* `maxdepth` - maksymalna głębokość drzewa (0 = brak ograniczeń).
+
+Widzimy zatem, że hiperparametry są bardzo analogiczne do tych z `rpart`.Sprawdźmy zatem jak poradzi sobie model ze znalezionymi hiperparametrami.
+
+```{r}
+perf_classif_ctree_best
+```
+
+Widać, że udało nam się zwiększyć `auc`, przy większej mocy obliczeniowej prawdopodobnie dałoby się znaleźć jeszcze lepszy zestaw paramterów.

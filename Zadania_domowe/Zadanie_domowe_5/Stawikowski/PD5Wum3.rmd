@@ -1,0 +1,279 @@
+---
+title: "Drzewa decyzyjne"
+author: "Micha³‚ Stawikowski"
+date: "`r format(Sys.time(), '%d - %m - %Y')`"
+output:
+  html_document:
+    code_folding: hide
+    df_print: paged
+    number_sections: yes
+    theme: flatly
+    toc: yes
+    toc_float: yes
+  pdf_document:
+    toc: yes
+---
+```{r setup, cache = F}
+knitr::opts_chunk$set(cache=TRUE)
+```
+
+```{r echo=FALSE, include=FALSE, warning=FALSE, message=FALSE}
+library(mlr)
+library(DALEX)
+library(OpenML)
+library(dplyr)
+library(mlrCPO)
+library(BBmisc)
+library(randomForest)
+library(mlrMBO)
+library(DiceKriging)
+library(rgenoud)
+library(rpart)
+library(rpart.plot)
+library(rattle)
+library(RColorBrewer)
+library(partykit)
+# Wczytywanie
+data <- titanic
+```
+
+# Wstêp
+
+W tym raporcie przyjrzê siê algorytmowi drzewa decyzyjnego, a konktretnie `R`-owej implementacji `rpart`. Przeanalizujemy i omówimy wnioski pochodz¹ce z [artyku³u](https://arxiv.org/pdf/1802.09596.pdf) na temat optymalnego zbioru himperparametrów dla algorytmu `rpart` na zbiorze danych `Titanic`. Zwizualizujê wytrenowawane drzewa oraz zbadam wp³yw kryterium podzia³u na powsta³e regu³y decyzyjne. Na koniec zbadam czym ró¿ni¹ sie wczesniej omawiane drzewa od `Conditional Inference Trees`.
+
+# Porównanie ustawieñ hiperparametrów
+
+W wy¿ej wymienionym artykule do strojenia zosta³y wybrane parametry:
+
+* `cp` - 'parametr z³o¿onoœci', który zapobiega dokonywania nic nie wnosz¹cych podzia³ów
+
+* `maxdepth` - maksymalna g³êbokoœæ drzewa
+
+* `minbucket` - minimalna liczba obserwacji w liœciu 'terminalnym'
+
+* `minsplit` - minimalna liczba obserwacji w wêŸle umo¿liwiaj¹ca jego podzia³
+
+W strojenie skupimy siê na tych parametrach i porównamy te proponowane domyœlnie przez pakiet `rpart`, te otrzymane przez autorów raportu w wyniku szukania optymalnych ustawieñ oraz te znalezione dziêki `random search`. Do oceny wyników bêdziemy u¿ywali 5-krotnej kroswalidacji. Tak jak autorzy wczeœniej wymienionej pracy skupimy siê na miarach `AUC` i `ACC`.
+
+## Ustawienia domyœlne 
+
+```{r warnings=FALSE, message=FALSE}
+classif_task = makeClassifTask(id = "task", data = data, target = "survived")
+classif_lrn = makeLearner("classif.rpart", predict.type = "prob")
+
+cv <- makeResampleDesc("CV", iters = 5)
+r <- resample(classif_lrn, classif_task, cv, measures = list(acc, auc))
+
+measure <- r$aggr
+measure
+
+
+```
+
+## Random search
+
+Hiperparametrów bêdziemy szukaæ na tej samej przestrzeni co autorzy artyku³u. Wykonamy 50 iteracji losowego szukania najlepszych parametrów.
+
+```{r warnings=FALSE, message=FALSE}
+classif_task = makeClassifTask(id = "task", data = data, target = "survived")
+classif_lrn = makeLearner("classif.rpart", predict.type = "prob")
+
+num_ps = makeParamSet(
+  makeIntegerParam("cp", lower = 0, upper = 1),
+  makeIntegerParam("maxdepth", lower = 1, upper = 30),
+  makeIntegerParam("minbucket", lower = 1, upper = 60),
+  makeIntegerParam("minsplit", lower = 1, upper = 60)
+)
+
+ctrl = makeTuneControlRandom(maxit = 50L)
+rdesc = makeResampleDesc("CV", iters = 5L)
+
+
+
+res5 = tuneParams(classif_lrn, task = classif_task, resampling = rdesc,
+                  par.set = num_ps, control = ctrl, measures = list(auc,acc))
+
+res5
+
+```
+
+## Optymalny zestaw
+
+```{r warnings=FALSE, message=FALSE}
+classif_task2 = makeClassifTask(id = "task", data = data, target = "survived")
+classif_lrn2 = makeLearner("classif.rpart", predict.type = "prob", par.vals = list("cp" = 0, "maxdepth" = 21,
+                                                                                  "minbucket" = 12, "minsplit" = 24))
+
+cv2 <- makeResampleDesc("CV", iters = 5)
+r2 <- resample(classif_lrn2, classif_task2, cv2, measures = list(acc, auc))
+
+measure2 <- r2$aggr
+measure2
+
+
+```
+
+Najlepiej pod wzglêdem `AUC` poradzi³ sobie zestaw hiperparametrów propownowany przez autorów artyku³u. Minimalnie gorzej wypad³ wynik uzyskany przy parametrach znalezionych losowo przy 50 iteracjach. W dwóch ostatnich przyk³adach widaæ znaczn¹ poprawê `AUC` w porównaniu do domyœlnego ustawienia z pakietu. Jednak pod wzglêdem `ACC` najlepiej wypad³ wynik uzyskany przy pierwszym ustawieniu. Mo¿liwe, ¿e parametry proponowane w pakiecie zosta³y wybierane pod wzglêdem `accuracy`, a nie `AUC` jak dwa pozosta³e ustawinia parametrów.
+
+# Wizualizacja najlepszego drzewa
+
+```{r, fig.width=12, fig.height=12}
+
+tree <- rpart(survived~., data=data, cp = 0, maxdepth = 21, minbucket = 12, minsplit = 24)
+
+plot(tree, uniform=TRUE, 
+   main="Najlepsze drzewo")
+text(tree, use.n=TRUE, all=TRUE, cex=.8)
+
+```
+
+Powsta³e drzewo okaza³o siê bardzo du¿e, wiêc w raporcie zamieœci³em najprostsz¹ wizualizacjê. W folderze zamieszczam te¿ przyjemniejszy dla oka `PDF` otrzymany za pomoc¹ `rpart.plot`. Na rysunku widaæ regu³y decyzyjne drzewa, niestety niektóre decyzje by³y podejmowane przy du¿ej iloœæ poziomów zmiennych (nazwy pañstw) i ich nazwy nie zachowa³y siê na tym rysunku. Wszystko dok³adnie widaæ na drugim rysunku `tree.pdf`. Mo¿emy dostrzec wiele wêz³ów zale¿¹cych od `wieku` pasa¿eróW. Na samej górze drzewa, w samym korzeniu mo¿emy zauwa¿yæ podzia³ ze wzglêdu na `p³eæ`, która ma prawdopodobnie doœæ du¿e znaczenie dla klasyfikacji. Tu¿ pod korzeniem nastêpne dwa du¿e podzia³y zale¿¹ od `klasy`. Pierwszy wêze³ terminalny mo¿na w³aœnie zauwa¿yæ po tych dwóch podzia³ach po prawej stronie drzewa, s¹ to kobiety podró¿uj¹ce trzeci¹ klas¹
+
+# Kryterium podzia³u 
+
+
+## Information Gain
+
+`Przyrost informacji` jest u¿ywany przy wybieraniu zmiennych, wed³ug których nast¹pi podzia³ na ka¿dym etapie w trakcie budowania drzewa.
+
+
+```{r warnings=FALSE, message=FALSE,fig.width=12, fig.height=12}
+classif_task2 = makeClassifTask(id = "task", data = data, target = "survived")
+classif_lrn2 = makeLearner("classif.rpart", predict.type = "prob", par.vals = list("cp" = 0, "maxdepth" = 21,
+                                                                                  "minbucket" = 12, "minsplit" = 24),parms = list(split = 'information'))
+
+cv2 <- makeResampleDesc("CV", iters = 5)
+r2 <- resample(classif_lrn2, classif_task2, cv2, measures = list(acc, auc))
+
+measure2 <- r2$aggr
+measure2
+
+tree <- rpart(survived~., data=data, cp = 0, maxdepth = 21, minbucket = 12, minsplit = 24, parms = list(split = 'information'))
+
+plot(tree, uniform=TRUE, main="Information gain")
+text(tree, use.n=TRUE, all=TRUE, cex=.8)
+
+
+```
+
+
+## Gini
+
+Wska¿nik `Gini impurity` liczymy ze wzoru:
+
+$1 - \sum^{J}_{i=1} {p_i}^{2}$ 
+
+Gdzie $J$ to zbiór wszystkich klas, a ${p_i}$ oznacza frakcje obiektów z klasy $i$-tej. Funkcja osi¹ga minimum, gdy wszystkie obiekty w wêŸlê nale¿¹ do jednej klasy. To kryterium preferuje wiêksze podzia³y i jest bardzo proste do zaimplementowania i nie wymaga tak du¿o czasu do policzenia jak `Entropia`, któr¹ wyzncza siê przy `Information gain`.
+
+```{r warnings=FALSE, message=FALSE,fig.width=12, fig.height=12}
+classif_task2 = makeClassifTask(id = "task", data = data, target = "survived")
+classif_lrn2 = makeLearner("classif.rpart", predict.type = "prob", par.vals = list("cp" = 0, "maxdepth" = 21,
+                                                                                  "minbucket" = 12, "minsplit" = 24),parms = list(split = 'gini'))
+
+cv2 <- makeResampleDesc("CV", iters = 5)
+r2 <- resample(classif_lrn2, classif_task2, cv2, measures = list(acc, auc))
+
+measure2 <- r2$aggr
+measure2
+
+tree <- rpart(survived~., data=data, cp = 0, maxdepth = 21, minbucket = 12, minsplit = 24, parms = list(split = 'gini'))
+
+plot(tree, uniform=TRUE, main="Ginii")
+text(tree, use.n=TRUE, all=TRUE, cex=.8)
+
+
+```
+
+
+Oba drzewa wygl¹daj¹ bardzo podobnie, choæ widaæ drobne ró¿nice w niektórych wêz³ach. Bior¹c pod uwagê `AUC` lepiej pordzia³ sobie model z kryterium podzia³u `Gini`, ale mo¿esz byæ to kwestia pojedynczego uruchomienia, gdy¿ drzewa s¹ bardzo podobne. Cytuj¹c [ Introduction to Data Mining](https://www-users.cs.umn.edu/~kumar001/dmbook/index.php):
+
+"Studies have shown that the choice of impurity measure has little effect on the performance of decision tree induction algorithms. This is because many impurity measures are quite consistent with each other [...]."
+
+
+# Conditional Inference Trees - ctree
+
+G³ówn¹ ró¿nica pomiêdzy `ctree` a `rpart` jest to w jaki sposób wyznaczaj¹ istotnoœæ zmiennych i jak dokonuj¹ podzia³ów. `Rpart` jest algorytmem drzew binarnych, wykorzystuj¹cym rekurencyjne podzia³y. Podczas uczenia przeszukuje wszystkie mo¿liwe podzia³y maksymalizuj¹c miarê informacyjn¹ `node impurity`. `Ctree` jest statystycznym podejœciem do rekurencyjnego podzia³u, który wykorzystuje informacje o rozk³dzie danych. Algorytm wykonuje wiele procedur testowych, które s¹ stosowane w celu okreœlenia, czy nie mo¿na stwierdziæ ¿adnego istotnego zwi¹zku miêdzy jak¹kolwiek cech¹ a zmienn¹ przewidywan¹ i czy  rekurencja musi siê zatrzymaæ.
+
+W tej czêœci poróWnamy oba alogrytmy trenuj¹c je na zbiorze `Titanic`, stroj¹c hiperparametry, a na koniec porównuj¹c uzyskane wyniki. Stroiæ bêdê wykorzystuj¹c `random search`
+
+## Ctree
+
+```{r warnings=FALSE, message=FALSE,fig.width=16, fig.height=16}
+classif_task2 = makeClassifTask(id = "task", data = data, target = "survived")
+classif_lrn2 = makeLearner("classif.ctree", predict.type = "prob")
+
+cv2 <- makeResampleDesc("CV", iters = 5)
+r2 <- resample(classif_lrn2, classif_task2, cv2, measures = list(acc, auc))
+
+measure2 <- r2$aggr
+measure2
+
+library("fastDummies")
+dataOne <- fastDummies::dummy_cols(data, select_columns = "country")
+dataOne <- select(dataOne, -country)
+ ctree1 <- partykit::ctree(survived~.,data = dataOne)
+
+    plot(ctree1)
+```
+
+Wyniki bez strojenia i postaæ drzewa. Widzimy, ¿e ju¿ z domyœlnymi hiperparametrami algorytm osi¹ga bardzo dobre wyniki pod wzglêdem `AUC`.
+
+```{r warnings=FALSE, message=FALSE}
+classif_task = makeClassifTask(id = "task", data = data, target = "survived")
+classif_lrn = makeLearner("classif.ctree", predict.type = "prob")
+
+num_ps = makeParamSet(
+  makeIntegerParam("mtry", lower = 0, upper = 8),
+  makeIntegerParam("maxdepth", lower = 1, upper = 30),
+  makeIntegerParam("minbucket", lower = 1, upper = 60),
+  makeIntegerParam("minsplit", lower = 1, upper = 60)
+)
+
+
+
+ctrl = makeTuneControlRandom(maxit = 50L)
+rdesc = makeResampleDesc("CV", iters = 5L)
+
+
+
+res5C = tuneParams(classif_lrn, task = classif_task, resampling = rdesc,
+                  par.set = num_ps, control = ctrl, measures = list(auc,acc))
+
+res5C
+
+
+
+
+```
+
+Wyniki po `random search`.
+
+## Rpart
+
+```{r warnings=FALSE, message=FALSE}
+classif_task = makeClassifTask(id = "task", data = data, target = "survived")
+classif_lrn = makeLearner("classif.rpart", predict.type = "prob")
+
+num_ps = makeParamSet(
+  makeIntegerParam("maxdepth", lower = 1, upper = 30),
+  makeIntegerParam("minbucket", lower = 1, upper = 60),
+  makeIntegerParam("minsplit", lower = 1, upper = 60)
+)
+
+
+
+ctrl = makeTuneControlRandom(maxit = 50L)
+rdesc = makeResampleDesc("CV", iters = 5L)
+
+
+
+res5R = tuneParams(classif_lrn, task = classif_task, resampling = rdesc,
+                  par.set = num_ps, control = ctrl, measures = list(auc,acc))
+
+res5R
+
+
+
+
+```
+W tym konkretnym porównaniu `ctree` poradzi³o sobie podobnie do `rpart` pod wzglêdem `ACC`, lecz znacznie lepiej pod wzglêdem `AUC`, znacz¹co przeœcigaj¹c `rpart`. Algorytm Conditional Inference Trees uzyska³ nawet lepsze wyniki od przedstawianego wczeœniej optymalnego zestawu parametrów.
