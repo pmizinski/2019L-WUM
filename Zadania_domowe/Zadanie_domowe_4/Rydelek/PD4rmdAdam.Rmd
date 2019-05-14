@@ -1,0 +1,285 @@
+---
+title: "PD4"
+author: "Adam Rydelek"
+date: "13.04.2019"
+output:
+  html_document:
+    df_print: paged
+    toc: true
+    toc_float: true
+    code_folding: hide
+    number_sections: true
+---
+
+```{r setup, include=FALSE}
+library(DALEX)
+library(OpenML)
+library(mlr)
+library(gridExtra)
+library(knitr)
+apt <- apartments
+cars <- getOMLDataSet(745)
+cars <- cars$data
+set.seed(123, "L'Ecuyer")
+```
+
+# Wprowadzenie
+
+Będziemy badać metodę *svm* na zbiorze **apartments** z pakietu `DALEX` i zbiorze **auto_price** z `OpenML'a`. Poniżej znajduje się podsumowanie zbiorów.
+
+## Apartments
+```{r apt}
+summary(apt)
+```
+
+Na tym zbiorze będziemy wykonywać regresję na zmiennej *m2.price*, czyli cenie za metr kwadratowy mieszkania.
+
+## Auto_price
+```{r cars}
+summary(cars)
+```
+
+Na powyższym zbiorze wykonamy klasyfikację zmiennej wieloklasowe: *symboling*
+
+# Parametry domyślne
+
+## Apartmets
+
+### Bez skalowania
+
+Na początek sprawdzimy jak radzi sobie **svm** na zbiorach danych bez skalowania, aby to osiągnąć musimy zmienić domyślny parametr `scale` na *FALSE*. Sprawdzimy teraz jak sobie poradził model.
+
+```{r, include=FALSE, warning=FALSE,error=FALSE}
+regr_tsk1 <- makeRegrTask(id='1', data=apt, target='m2.price')
+regr_lrn1 <- makeLearner('regr.svm' ,predict.type = 'response', par.vals = list(scale = FALSE))
+cv <- makeResampleDesc("CV", iters = 5)
+r <- resample(regr_lrn1, regr_tsk1, cv, measures = list(mse,rmse,rsq))
+```
+```{r}
+kable(data.frame(r$aggr))
+```
+
+Można zauważyć, że wyniki są fatalne, a błąd średniokwadratowy jest ogromny.
+
+### Ze skalowaniem
+
+Teraz stworzymy learner **svm** z domyślnymi parametrami, czyli również z parametrem `scale` ustawionym na *TRUE*.
+
+```{r, include=FALSE, warning=FALSE,error=FALSE}
+regr_lrn1b <- makeLearner('regr.svm' ,predict.type = 'response', par.vals = list(scale = TRUE))
+cv <- makeResampleDesc("CV", iters = 5)
+r <- resample(regr_lrn1b, regr_tsk1, cv, measures = list(mse,rmse,rsq))
+```
+```{r}
+kable(data.frame(r$aggr))
+```
+
+Można zauważyć znaczną poprawę, jednak wyniki dalej nie są zadowalające.
+
+## Auto_price
+
+### Bez skalowania
+
+Teraz sprawdzimy jak radzi sobie svm bez skalowania z klasyfikacją wieloklasową na zbiorze auto_price.
+
+```{r, include=FALSE, warning=FALSE,error=FALSE}
+classif_tsk2 <- makeClassifTask(id='2', data=cars, target='symboling')
+classif_lrn2 <- makeLearner('classif.svm' ,predict.type = 'prob', par.vals = list(scale = FALSE))
+r <- resample(classif_lrn2, classif_tsk2, cv, measures = list(acc,mmce))
+r$aggr
+
+```
+```{r}
+kable(data.frame(r$aggr))
+```
+Zgodnie z przepuszczeniami po poprzednim przykładzie, tym razem również wyniki są bardzo niedokładne.
+
+### Ze skalowaniem
+
+```{r, include=FALSE, warning=FALSE,error=FALSE}
+classif_lrn2b <- makeLearner('classif.svm' ,predict.type = 'prob', par.vals = list(scale = TRUE))
+r <- resample(classif_lrn2b, classif_tsk2, cv, measures = list(acc,mmce))
+r$aggr
+```
+```{r}
+kable(data.frame(r$aggr))
+```
+
+Ze skalowaniem wyniki są już na dobrym poziomie, ale również spróbujemy je poprawić w dalszej części.
+
+
+# Tuning parametrów
+
+Aby poprawić działanie naszych learnerów, zarówno regresyjnego i klasyfikacyjnego wykorzystamy dwie metody tuningu parametrów: *Grid Search* i *Random Search*. Zajmiemy się dostrajaniem parametrów dla jądra gaussowskiego - **radial**. Za istotne parametry godne modyfikacji uznałem:
+**gamma** - parametr numeryczny
+**cost** - parametr numeryczny
+
+```{r}
+ps = makeParamSet(
+  makeNumericParam("gamma", lower = -10, upper = 10),
+  makeNumericParam("cost", lower = -10, upper = 50),
+  makeDiscreteParam("kernel", values="radial")
+)
+
+ctrlRand = makeTuneControlRandom(maxit = 200L)
+
+ctrlGrid = makeTuneControlGrid(resolution = 100L)
+
+```
+
+
+## Apartments
+
+### Grid Search
+```{r, cache=TRUE, include=FALSE, warning=FALSE,error=FALSE}
+res1a = tuneParams(regr_lrn1b, task = regr_tsk1, resampling = cv,
+                 par.set = ps, control = ctrlGrid, measures = list(mse,rmse,rsq))
+regr_lrn2 <- makeLearner("regr.svm", predict.type = "response", par.vals = res1a$x)
+r <- resample(regr_lrn2, regr_tsk1, cv, measures = list(mse,rmse,rsq))
+```
+```{r}
+kable(data.frame(res1a$x))
+kable(data.frame(r$aggr))
+```
+
+### Random Search
+```{r, cache=TRUE, include=FALSE, warning=FALSE,error=FALSE}
+res1b = tuneParams(regr_lrn1b, task = regr_tsk1, resampling = cv,
+                 par.set = ps, control = ctrlRand, measures = list(mse,rmse,rsq))
+regr_lrn3 <- makeLearner("regr.svm", predict.type = "response", par.vals = res1b$x)
+r <- resample(regr_lrn3, regr_tsk1, cv, measures = list(mse,rmse,rsq))
+
+```
+```{r}
+kable(data.frame(res1b$x))
+kable(data.frame(r$aggr))
+```
+
+Można więc zauważyć poprawę wyników po tuningu parametrów dla obu sposobów. Lepszy tym razem okazał się Grid Search.
+
+## Auto_price
+
+### Grid Search
+```{r, cache=TRUE, include=FALSE, warning=FALSE, error=FALSE}
+res2a = tuneParams(classif_lrn2b, task = classif_tsk2, resampling = cv, par.set = ps, control = ctrlGrid, measures = list(acc,mmce))
+
+classif_lrn3 <- makeLearner("classif.svm", predict.type="prob", par.vals= res2a$x)
+r <- resample(classif_lrn3, classif_tsk2, cv, measures = list(acc,mmce))
+```
+```{r}
+kable(data.frame(res2a$x))
+kable(data.frame(r$aggr))
+```
+
+### Random Search
+
+```{r, cache=TRUE, include=FALSE, warning=FALSE,error=FALSE}
+res2b = tuneParams(classif_lrn2b, task = classif_tsk2, resampling = cv,
+                 par.set = ps, control = ctrlRand, measures = list(acc,mmce))
+classif_lrn4 <- makeLearner("classif.svm", predict.type="prob", par.vals= res2b$x)
+r <- resample(classif_lrn4, classif_tsk2, cv, measures = list(acc,mmce))
+
+```
+```{r}
+kable(data.frame(res2b$x))
+kable(data.frame(r$aggr))
+```
+
+Tym razem lepiej spisał się Random Search. Accuracy w porównaniu do domyślnych parametrów poprawiło się znacznie, co pokazuje, że tuning parametrów ma sens.
+
+# Wizualizacja
+
+```{r, cache=TRUE}
+custom_predict_r <- function(object, newdata) {pred <- predict(object, newdata=newdata)
+response <- pred$data$response
+return(response)}
+
+custom_predict_c <- function(object, newdata) {pred <- predict(object, newdata=newdata)
+response <- pred$data[,1]
+return(response)}
+
+
+regr_lrnt <- makeLearner("regr.ranger", predict.type = "response")
+
+
+
+classif_lrnt <- makeLearner("classif.ranger", predict.type="prob")
+
+
+train1a = train(classif_lrn2, classif_tsk2)
+train1b = train(classif_lrn2b, classif_tsk2)
+train1c = train(classif_lrn3, classif_tsk2)
+train1d = train(classif_lrn4, classif_tsk2)
+train1t = train(classif_lrnt, classif_tsk2)
+
+train2a = train(regr_lrn1, regr_tsk1)
+train2b = train(regr_lrn1b, regr_tsk1)
+train2c = train(regr_lrn2, regr_tsk1)
+train2d = train(regr_lrn3, regr_tsk1)
+train2t = train(regr_lrnt, regr_tsk1)
+
+explainer1a <- explain(train2a, data = apt[,2:6], y = apt$m2.price, predict_function = custom_predict_r, label="No scaling")
+explainer1b <- explain(train2b, data = apt[,2:6], y = apt$m2.price, predict_function = custom_predict_r, label="Scaling")
+explainer1c <- explain(train2c, data = apt[,2:6], y = apt$m2.price, predict_function = custom_predict_r, label="Grid Tuning")
+explainer1d <- explain(train2d, data = apt[,2:6], y = apt$m2.price, predict_function = custom_predict_r, label="Random Tuning")
+explainer1t <- explain(train2t, data = apt[,2:6], y = apt$m2.price, predict_function = custom_predict_r, label="Ranger")
+
+explainer2a <- explain(train1a, data = cars[,2:16], y = cars$symboling, predict_function = custom_predict_c, label="No scaling")
+explainer2b <- explain(train1b, data = cars[,2:16], y = cars$symboling, predict_function = custom_predict_c, label="Scaling")
+explainer2c <- explain(train1c, data = cars[,2:16], y = cars$symboling, predict_function = custom_predict_c, label="Grid Tuning")
+explainer2d <- explain(train1d, data = cars[,2:16], y = cars$symboling, predict_function = custom_predict_c, label="Random Tuning")
+explainer2t <- explain(train1t, data = cars[,2:16], y = cars$symboling, predict_function = custom_predict_c, label="Ranger")
+
+pdp1a <- variable_response(explainer1a, variable = "construction.year", type = "pdp")
+pdp1b <- variable_response(explainer1b, variable = "construction.year", type = "pdp")
+pdp1c <- variable_response(explainer1c, variable = "construction.year", type = "pdp")
+pdp1d <- variable_response(explainer1d, variable = "construction.year", type = "pdp")
+pdp1t <- variable_response(explainer1t, variable = "construction.year", type = "pdp")
+
+ale1a <- variable_response(explainer1a, variable = "surface", type = "ale")
+ale1b <- variable_response(explainer1b, variable = "surface", type = "ale")
+ale1c <- variable_response(explainer1c, variable = "surface", type = "ale")
+ale1d <- variable_response(explainer1d, variable = "surface", type = "ale")
+ale1t <- variable_response(explainer1t, variable = "surface", type = "ale")
+
+
+pdp2a <- variable_response(explainer2a, variable = "horsepower", type = "pdp")
+pdp2b <- variable_response(explainer2b, variable = "horsepower", type = "pdp")
+pdp2c <- variable_response(explainer2c, variable = "horsepower", type = "pdp")
+pdp2d <- variable_response(explainer2d, variable = "horsepower", type = "pdp")
+pdp2t <- variable_response(explainer2t, variable = "horsepower", type = "pdp")
+
+ale2a <- variable_response(explainer2a, variable = "city.mpg", type = "ale")
+ale2b <- variable_response(explainer2b, variable = "city.mpg", type = "ale")
+ale2c <- variable_response(explainer2c, variable = "city.mpg", type = "ale")
+ale2d <- variable_response(explainer2d, variable = "city.mpg", type = "ale")
+ale2t <- variable_response(explainer2t, variable = "city.mpg", type = "ale")
+```
+
+## PDP
+
+### Apartments
+```{r}
+plot(pdp1a,pdp1b,pdp1c,pdp1d,pdp1t)
+```
+
+### Auto_price
+```{r}
+plot(pdp2a,pdp2b,pdp2c,pdp2d,pdp2t)
+```
+
+## ALE
+
+### Apartments
+```{r}
+plot(ale1a,ale1b,ale1c,ale1d,ale1t)
+```
+
+### Auto_price
+```{r}
+plot(ale2a,ale2b,ale2c,ale2d,ale2t)
+```
+
+# Podsumowanie
+
+Podsumowując można zauważyć, że skalowanie w modelach z użyciem **svm** jest kluczowe. Ponad to osiągnęliśmy oczekiwany efekt - tuning parametrów poprawił działanie modelu i otrzymaliśmy lepsze wyniki. Dzięki powyższym wykresom **PDP** i **ALE** można zauważyć, że *svm* bez skalowania działa całkiem inaczej, niż ten domyślny ze skanowaniem, co pokazuje jak istotne jest skalowanie. Porównując różne *svm* i *ranger*, czyli strukturę drzewiastą można zauważyć, że jego wykresy **PDP** okazały się na dłuższym odcinku liniowe, niż *svm*. Natomiast dla wybranych wykresów **ALE** można zauważyć, że wyniki są bardziej zbliżone, jednak nadal widać różnicę.
