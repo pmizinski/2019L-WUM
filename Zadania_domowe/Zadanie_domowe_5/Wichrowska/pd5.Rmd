@@ -1,0 +1,146 @@
+---
+title: "PD5"
+author: "Aleksandra Wichrowska"
+date: "30 kwietnia 2019"
+output: html_document
+---
+
+```{r setup, echo=FALSE, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE, message=FALSE, cache=TRUE)
+library(DALEX)
+library(mlr)
+library(rpart)
+
+data <- titanic
+data <- data[,!colnames(data)%in%c("PassengerId", "Name", "Ticket", "Cabin")]
+```
+
+## Wprowadzenie
+
+W tym zadaniu przyjrzę się działaniu algorytmów drzew decyzyjnych. Badania będą oparte na modelu `rpart` z pakietu `mlr`.
+
+## Dane
+
+Dane wykorzystywane w tym raporcie to `titanic` z pakietu `DALEX` - informacje o przeżywalności pasażerów Titanica.
+
+```{r titanic}
+head(data)
+```
+
+# Porównanie hiperparametrów
+
+## Przygotowanie modelu na domyślnych parametrach
+
+* cp = 0.01
+* maxdepth = 30
+* minbucket = 7
+* minsplit = 20
+
+```{r default}
+classif_task = makeClassifTask(id = "task", data = data, target = "survived")
+classif_lrn = makeLearner("classif.rpart", predict.type = "prob")
+
+cv <- makeResampleDesc("CV", iters = 5)
+r <- resample(classif_lrn, classif_task, cv, measures = list(acc, auc))
+
+measure <- r$aggr
+measure
+```
+
+
+## Przygotowanie modelu na parametrach z artykułu
+
+W artykule autorzy sugerują wybór następującyh wartości parametru:
+
+* cp = 0
+* maxdepth = 21
+* minbucket = 12
+* minsplit = 24
+
+```{r article}
+classif_lrn2 = makeLearner("classif.rpart", predict.type = "prob", par.vals = list("cp" = 0, "maxdepth" = 21,
+                                                                                  "minbucket" = 12, "minsplit" = 24))
+r2 <- resample(classif_lrn2, classif_task, cv, measures = list(acc, auc))
+measure2 <- r2$aggr
+measure2
+```
+
+
+## Random search
+
+Wykonamy jeszcze 100 iteracji losowego szukania najlepszych parametrów w takim samym zakresie jak ten proponowany w artykule.
+
+```{r random}
+classif_lrn <- makeLearner("classif.rpart", predict.type = "prob")
+
+ps <- makeParamSet(
+  makeIntegerParam("cp", lower = 0, upper = 1),
+  makeIntegerParam("maxdepth", lower = 1, upper = 30),
+  makeIntegerParam("minbucket", lower = 1, upper = 60),
+  makeIntegerParam("minsplit", lower = 1, upper = 60)
+)
+
+control <- makeTuneControlRandom(maxit = 100L)
+r3 <- tuneParams(classif_lrn, task = classif_task, resampling = cv,
+                  par.set = ps, control = control, measures = list(auc,acc))
+r3
+```
+
+
+Patrząc na miarę AUC najlepiej wypada model z parametrami z artykułu. Wynik otrzymany z Random Search jest bardzo zbliżony.
+
+# Wizualizacja drzew
+
+```{r, fig.width=12, fig.height=12}
+tree <- rpart(survived~., data=data, cp = 0, maxdepth = 21, minbucket = 12, minsplit = 24)
+plot(tree, uniform=TRUE, 
+   main="Najlepsze drzewo")
+text(tree, use.n=TRUE, all=TRUE, cex=.8)
+```
+
+Obserwacje:
+
+* wiele punktów zależy od wieku oraz płci pasażerów
+* korzeń jest zależny od płci, a węzły zaraz pod nim od klasy
+
+# Kryterium podziału 
+
+## Information Gain
+
+```{r information gain}
+classif_lrn3 = makeLearner("classif.rpart", predict.type = "prob", par.vals = list("cp" = 0, "maxdepth" = 21, "minbucket" = 12, "minsplit" = 24),
+                            parms = list(split = 'information'))
+r4 <- resample(classif_lrn3, classif_task, cv, measures = list(acc, auc))
+
+measure4 <- r4$aggr
+measure4
+```
+
+```{r plot2, fig.width=12, fig.height=12}
+tree <- rpart(survived~., data=data, cp = 0, maxdepth = 21, minbucket = 12, minsplit = 24, parms = list(split = 'information'))
+
+plot(tree, uniform=TRUE, main="Information gain")
+text(tree, use.n=TRUE, all=TRUE, cex=.8)
+```
+
+
+## Gini
+
+```{r gini}
+classif_lrn3 = makeLearner("classif.rpart", predict.type = "prob", par.vals = list("cp" = 0, "maxdepth" = 21, "minbucket" = 12, "minsplit" = 24),
+                            parms = list(split = 'gini'))
+r5 <- resample(classif_lrn3, classif_task, cv, measures = list(acc, auc))
+
+measure5 <- r5$aggr
+measure5
+```
+
+```{r plot3, fig.width=12, fig.height=12}
+tree <- rpart(survived~., data=data, cp = 0, maxdepth = 21, minbucket = 12, minsplit = 24, parms = list(split = 'gini'))
+
+plot(tree, uniform=TRUE, main="Gini")
+text(tree, use.n=TRUE, all=TRUE, cex=.8)
+```
+
+
+Uzyskane drzewa są bardzo podobne, wyliczone AUC różni się nieznacznie, więc trudno stwierdzić, który model poradził sobie lepiej.
