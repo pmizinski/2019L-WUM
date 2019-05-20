@@ -1,0 +1,167 @@
+---
+title: "praca domowa 5"
+author: "Joanna Gajewska"
+date: "29 April 2019"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+
+#Polecenie
+
+Artykuł https://arxiv.org/pdf/1802.09596.pdf proponuje domyślne hiperparametry dla konstrukcji drzew.
+Na zbiorze danych Titanic
+
+***a)***sprawdź skuteczność modelu z podanymi hiperparametrami (po zapoznaniu się z ich znaczeniem),
+
+***b)***porównaj wynik z domyślnymi hiperparametrami z pakietu i z wynikiem random search,
+
+***c)***narysuj najlepsze otrzymane drzewo, wyciągnij z niego reguły decyzyjne,
+
+***d)***dla domyślnych hiperparametrów z artykułu porównaj drzewa zbudowane z kryterium podziału Gini i Information Gain (np. parms = list(split = 'information')).
+```{r,  echo=FALSE, message=FALSE, warning=FALSE}
+library(MASS)
+library(rpart)
+library(rpart.plot)
+library(mlr)
+library (knitr)
+library(ggplot2)
+library(rmarkdown)
+
+set.seed(200)
+
+rm(list=ls())
+train=read.csv(file="train.csv")
+test=read.csv(file="test.csv")
+
+train<-train[,-11]
+
+train<-train[,-4]
+train<-train[,-8]
+
+age<-mean(train$Age, na.rm = TRUE)
+
+train$Age[is.na(train$Age)]<-age
+
+row.has.na <- apply(train, 1, function(x){any(is.na(x))})
+train<- train[!row.has.na,]
+
+
+
+```
+
+
+###a) sprawdź skuteczność modelu z podanymi hiperparametrami (po zapoznaniu się z ich znaczeniem)
+
+Oto dataset na którym będą prowadzone badania w tym zadaniu. Dotyczy on pasażerów słynnego Titania. Ma posłużyć do przewidywania , którzy pasażerowie mają sznasę przeżyć. 
+
+
+```{r,  echo=FALSE, message=FALSE, warning=FALSE}
+head(train)
+
+task<-mlr::makeClassifTask(data=train, target = "Survived")
+learner<-makeLearner("classif.rpart", predict.type = "response", par.vals = list( minsplit = 18, minbucket = 12,  cp = 0.001 , maxdepth=13))
+cv <- makeResampleDesc("CV", iters = 5)
+r <- resample(learner, task, cv, measures=list(acc))
+ACC_article<- r$aggr
+ACC_article
+
+```
+
+Powyżej jest wyświetlona skuteczność dla drzewa decyzyjnego z ustawionymi parametrami z artykułu. 
+
+### b) porównaj wynik z domyślnymi hiperparametrami z pakietu i z wynikiem random search
+
+```{r,  echo=FALSE, message=FALSE, warning=FALSE}
+
+
+learner_default<-makeLearner("classif.rpart", predict.type = "response")
+r_default <- resample(learner_default, task, cv, measures=list(acc))
+ACC_default<- r_default$aggr
+
+
+
+rpart_pars <- tuneParams(
+  makeLearner("classif.rpart",predict.type = "response"),
+  subsetTask(makeClassifTask( data = train, target = "Survived")),
+  resampling = cv5,
+  measures = mlr::acc,
+  par.set = makeParamSet(
+    makeNumericParam("cp",lower = 0,upper = 1),
+    makeDiscreteParam("maxdepth", values = 1:30),
+    makeDiscreteParam("minbucket", values = 1:60),
+    makeDiscreteParam("minsplit", values = 1:60)
+  ),
+  control = makeTuneControlRandom(maxit = 100), show.info=FALSE
+  )
+
+
+learner_random<-makeLearner("classif.rpart", predict.type = "response", par.vals = rpart_pars$x )
+r_random <- resample(learner_random, task, cv, measures=list(acc))
+ACC_random<- r_random$aggr
+
+
+
+ACC<-data.frame(ACC_article=ACC_article, ACC_default=ACC_default, ACC_ranodm=ACC_random)
+ACC
+
+
+
+```
+
+Analizując tabelę z wynikami ACC, widać, że najlepsze wyniki otrzymani dla domyślnych parametrów. Jednak są to na tyle znikome różnice, że mogą się zmieniać, ze względu na wykonywaną kroswalidacje przy  wyliczaniu skuteczności. 
+
+###c) narysuj najlepsze otrzymane drzewo, wyciągnij z niego reguły decyzyjne,
+
+Drzewo rysowane dla domyślnych parametrów. 
+
+
+```{r,  echo=FALSE, message=FALSE, warning=FALSE}
+tree_best <- rpart(Survived ~ ., train )
+
+rpart.plot(tree_best, type = 1, extra = 1)
+
+printcp(tree_best)
+```
+
+Z diagramu można zauważyć, że takie cechy jak płeć, wiek i klasa odgrywały kluczową rolę w klasyfikacji.
+Jest to logiczny podział, oczywiste jest, że dorośli mężczyźni są bardziej odporni niż kilkuletnie dziewczynki. Klasa określa standard w jakim pasażerowie odbywali podróż. Oczywiste jest, że biedniejsza grupa, będzie bardziej odporna na trudne warunki. 
+
+W powyższej tabeli zawarte są informacje parametru cp( współczynnik złożności, im większy tym mniej liści w drzewie, gdy cp=0 przeuczone drzewo), liczby podziałów drzewa, względnego błędu powtórnego podstawienia , względnego błędu kroswalidacji i odchylenie standardowe dla ostatniego przypadku. Przedstawione wartosci cp, są wartościami progowymi, dla których następuje zmiana budowy drzewa. Dla otrzymanego drzewa liczba liści wynosi 7, a cp=0.01
+
+```{r,  echo=FALSE, message=FALSE, warning=FALSE}
+plotcp(tree_best)
+```
+
+
+Powyżej jest wykres zależności względnego blędu kroswalidacji od wartości współczynnika cp. Widać im mniejszy błąd tym lepszą predykcje można usyskać, jednak trzeba rozsądnie wybierać współczynnik cp, tak by nie byl za mały, gdyż drzewo można przeuczyć. W tym przypadku ilość liści zdecydowanie nie jest niebeziecznie za duża, więc jak najbardziej można zaakceptować otrzymany wynik. 
+
+
+###d) dla domyślnych hiperparametrów z artykułu porównaj drzewa zbudowane z kryterium podziału Gini i Information Gain (np. parms = list(split = 'information')).
+
+```{r,  echo=FALSE, message=FALSE, warning=FALSE}
+# gini
+learner_gini<-makeLearner("classif.rpart", predict.type = "response",  parms  = list(split="gini") )
+tree_gini<-mlr::train(learner_gini, task)
+
+learner_info<-makeLearner("classif.rpart", predict.type = "response",  parms  = list(split="information") )
+tree_info<-mlr::train(learner_info, task)
+
+
+learner_hyper_d<-makeLearner("classif.rpart", predict.type = "response", par.vals = list( minsplit = 20, minbucket = 7,  cp = 0.01 , maxdepth=30))
+tree_hyp_d<-mlr::train(learner_hyper_d, task)
+
+rpart.plot(tree_hyp_d$learner.model, roundint = FALSE)
+
+rpart.plot(tree_info$learner.model,  roundint = FALSE)
+rpart.plot(tree_gini$learner.model,  roundint = FALSE)
+```
+
+
+Wykresy które nam się wyświetlają są w kolejnośći : hiperparametry domyślne z artykułu,  kryterium podziału Information gain oraz kryterium podziału Gini.
+Diagramy dla gini oraz hiperparametrów z artykułu są identyczne, kryteria wyboru są takie same, oraz ilość liści wynosi 9. Dla  przypadku information gain drzewo ma o wiele więcej liści - 15, co może grozić przeuczeniem. 
+
+

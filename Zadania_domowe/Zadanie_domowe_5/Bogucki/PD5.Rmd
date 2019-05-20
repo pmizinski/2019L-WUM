@@ -1,0 +1,134 @@
+---
+title: "PD5"
+author: "Wojciech Bogucki"
+date: "29 kwietnia 2019"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(rpart)
+library(dplyr)
+library(DALEX)
+library(mlr)
+library(rattle)
+library(rpart.plot)
+
+set.seed(123)
+n <- nrow(titanic)
+splitind <- rep(1, n)
+traininddnum <- floor(n*4/10)
+validind <- sample(1:n, traininddnum)
+testind <- validind[1:floor(traininddnum/2)]
+splitind[validind] <- 2
+splitind[testind] <- 3
+
+splitlist <- split(titanic, splitind)
+
+data_train <- splitlist$`1`
+data_valid <- splitlist$`2`
+data_test <- splitlist$`3`
+```
+
+# Wstęp
+Do pracy domowej użyłem zbioru ```titanic``` z pakietu DALEX oraz informacji z artykułu [Tunability: Importance of Hyperparameters of Machine
+Learning Algorithms](https://arxiv.org/pdf/1802.09596.pdf).
+
+Zbiór ```titanic``` podzieliłem na zbiory treningowy(60%), walidacyjny(20%) i testowy(20%).
+
+# Porównanie modeli
+W podanym artykule jako najważniejsze hiperparametry modelu drzew decyzyjnych z pakietu ```rpart``` wskazane są:
+
+* cp - jeżeli dopasowanie modelu nie poprawi się po wykonaniu podziału o tę wartość, podział nie jest wykonywany
+* maxdepth - maksymalna głębokość drzewa decyzyjnego
+* minbucket - minimalna liczba obserwacji w liściu
+* minsplit - minimalna liczba obesrwacji, przy której może jeszcze nastąpić podział
+
+## Hiperparametry z artykułu
+Jako pierwsze testowałem hiperparametry zaproponowane w artykule podanym we wstępie.
+```{r optymalny}
+model_opt <- rpart(survived~., data=data_train, control = rpart.control(cp=0, maxdepth = 21, minbucket = 12, minsplit = 24))
+
+pred_opt <- predict(model_opt, newdata = data_test)
+
+auc_opt <- measureAUC(pred_opt[,2],truth = data_test$survived, positive = "yes", negative = "no")
+```
+
+## Domyślne hiperparametry
+Następnie stworzyłem model z domyślnymi parametrami zapropowanymi przez twórców pakietu.
+```{r default}
+model_def <- rpart(survived~., data=data_train)
+
+pred_def <- predict(model_def, newdata = data_test)
+auc_def <- measureAUC(pred_def[,2],truth = data_test$survived, positive = "yes", negative = "no")
+```
+
+## Hiperparametry otrzymane metodą random search
+Na koniec wybrałem hiperparametry zwrócone przez funkcję ```tuneParams``` z pakietu ```mlr```, które zostały znalezione metodą random search.
+```{r random, warning=FALSE, cache=TRUE}
+train_task_data <- rbind(data_train, data_valid)
+size <- nrow(train_task_data)
+train_ind <- seq_len(nrow(data_train))
+validation_ind <- seq.int(max(train_ind) + 1, size)
+
+rpart_pars <- tuneParams(learner = makeLearner("classif.rpart", predict.type = "prob"), 
+           task = makeClassifTask(id="rpart_task", data = train_task_data, target = "survived"),
+           resampling = makeFixedHoldoutInstance(train_ind, validation_ind, size),
+           measures = auc,
+           par.set = makeParamSet(makeNumericParam("cp",0,1),
+                                  makeIntegerParam("maxdepth",1,30),
+                                  makeIntegerParam("minsplit",1,60),
+                                  makeIntegerParam("minbucket",1,60)),
+           control = makeTuneControlRandom(maxit = 500),
+           show.info = FALSE)
+
+model_rand <- rpart(survived~., data=data_train, control = rpart.control(cp=rpart_pars$x$cp, 
+                                                                         maxdepth = rpart_pars$x$maxdepth, 
+                                                                         minbucket = rpart_pars$x$minbucket, 
+                                                                         minsplit = rpart_pars$x$minsplit))
+
+pred_rand <- predict(model_rand, newdata = data_test)
+auc_rand <- measureAUC(pred_rand[,2],truth = data_test$survived, positive = "yes", negative = "no")
+
+```
+
+## Porównanie
+Jakość modeli mierzona za pomocą AUC oraz użyte hiperparametry znajdują się w poniższej tabeli:
+```{r, echo=FALSE}
+knitr::kable(data.frame(Parametry=c("Z artykułu","Z pakietu", "Z random search"),
+                        cp=c(0,0.1,0.000863),
+                        maxdepth=c(21,30, 12),
+                        minsplit=c(24,20,20),
+                        minbucket=c(12,7,32),
+                        AUC=c(auc_opt, auc_def, auc_rand)))
+
+```
+
+Najlepsze AUC uzyskał model mający hiperparametry podane w artykule, gorszy wynik miał model z hiperparametrami znalezionymi metodą random search, a najgorszy wynik miał model z domyślnymi hiperparametrami.
+
+# Drzewo decyzyjne
+
+![Drzewo decyzyjne dla najlepszego modelu](rpart2.png)
+
+A tak prezentują się reguły decyzyjne tego drzewa zapisane w tabeli:
+```{r, echo=FALSE}
+knitr::kable(rpart.rules(model_opt),caption = "Reguły decyzyjne najlepszego modelu")
+```
+
+# Wpływ kryterium podziału na wyniki
+Domyślnym kryterium podziału jest indeks Giniego. Tworzę teraz model z kryterium podziału Information Gain, które wybiera podział najbardziej zmniejszający entropię targetu(oraz z hiperparametrami poleconymi w artykule).
+
+```{r}
+model_opt2 <- rpart(survived~., data=data_train, control = rpart.control(cp=0, maxdepth = 21, minbucket = 12, minsplit = 24), parms = list(split = 'information'))
+
+pred_opt2 <- predict(model_opt2, newdata = data_test)
+
+auc_opt2 <- measureAUC(pred_opt2[,2],truth = data_test$survived, positive = "yes", negative = "no")
+```
+
+W tym przypadku Zmiana kryterium podziału pogorszyła AUC, co widać w poniższej tabeli
+```{r, echo=FALSE}
+knitr::kable(data.frame(Podzial=c("Gini","Information Gain"),AUC=c(auc_opt, auc_opt2)))
+```
+
+
