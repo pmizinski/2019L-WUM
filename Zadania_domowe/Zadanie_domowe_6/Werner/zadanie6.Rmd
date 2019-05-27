@@ -12,6 +12,7 @@ library(mclust)
 library(ggplot2)
 library(clues)
 library(reshape2)
+library(kableExtra)
 
 zbior<-read.csv("g2-2-100.data",header = FALSE,sep = " ")
 etykiety<-read.csv("g2-2-100.labels",header = FALSE,sep = " ")
@@ -23,7 +24,7 @@ d <- dist(zbior, method = "euclidean") # distance matrix
 
 #Opis zbioru danych
 ```{r}
-str(zbior)
+dim(zbior)
 ```
 
 Nasz zbior ma dwa wymiary i są tam dwa klastry Gausowskie. Znamy etykiety zbioru ktore sa w ramce danych etykiety.
@@ -57,7 +58,7 @@ clusplot(zbior, ward[[1]], color=TRUE, shade=TRUE, lines=0,main ="Ward",xlab = "
 
 Jak widzimy żadna z metod nie daje takiego pokrycia jak oryginalny.
 
-#Statystyki
+#Statystyki zewnetrzne
 ```{r echo=FALSE}
 ksrednie_stat$metoda<-"k-srednie"
 ward_stat$metoda<-"Ward"
@@ -72,6 +73,19 @@ ggplot(data = stat,aes(x=liczba_klastrow,y=value,color=metoda,group=metoda))+geo
 ```
 
 FM to skrót od indeks Fowlkesa i Mallowsa, a HA to skorygowany indeks Huberta i Arabiego.
+
+#Statystyki wewnetrzne(sylwetka)
+
+```{r echo=FALSE}
+syl_ward<-clues::get_Silhouette(zbior,ward[[1]])
+syl_ksrednie<-clues::get_Silhouette(zbior,ksrednie[[1]])
+kable(data.frame(Ward=syl_ward$avg.s,ksrednie=syl_ksrednie$avg.s),digits = 4,align = c("l","r"),"html") %>%
+  kable_styling(full_width = F)
+
+
+
+```
+
 
 #Wnioski
 Indeksy Randa oraz Fowlkesa i Mallowsa dawały zdecydowanie lepsze rezultaty ponieważ
