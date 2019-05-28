@@ -1,0 +1,276 @@
+---
+title: "PD6"
+author: "Dominik Rafacz"
+date: "`r format(Sys.time(), '%d - %m - %Y')`"
+output:
+  html_document:
+    theme: simplex
+    df_print: paged
+    toc: true
+    toc_float: true
+    code_folding: hide
+    number_sections: true
+editor_options: 
+  chunk_output_type: console
+---
+
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE,
+                      fig.width = 10,
+                      fig.height = 7,
+                      fig.align = "center",
+                      cache = TRUE)
+library(ggplot2)
+library(cowplot)
+library(kableExtra)
+library(dplyr)
+library(reshape)
+```
+
+
+# Wstęp
+
+W niniejszym raporcie będziemy badać indeksy oceniające skuteczność klasteryzacji. Pochodzą one z [niniejszego artykułu](https://www.researchgate.net/publication/2500099_On_Clustering_Validation_Techniques). 
+
+Będziemy korzystać z klasteryzacji hierarchicznej `hclust` (metoda `ward.D`) oraz algorytmu `kmeans`. Klasteryzacji dokonamy na syntetycznym zbiorze [s2](http://cs.joensuu.fi/sipu/datasets/). Zbiór ten jest dwuwymiarowy i posiada 15 klastrów:
+
+```{r dataset}
+dataset <- cbind(read.csv2("s2.data", sep = " ", 
+                           col.names = c("x", "y"),
+                           header = FALSE), 
+                 read.csv2("s2.labels", 
+                           col.names = "label",
+                           header = FALSE))
+dataset$x <- scale(dataset$x)
+dataset$y <- scale(dataset$y)
+
+# plotting:
+
+ggplot(data = dataset, aes(x = x, y = y, color = as.factor(label))) +
+  geom_point(show.legend = FALSE) +
+  ggtitle("dane z oryginalnymi klastrami")
+
+```
+
+# Klasteryzacja
+
+Teraz dokonamy kalsteryzacji oboma algorytmami z różną liczbą klastrów (`k`) - od 2 do 20 - i zwizualizujemy efekty:
+
+```{r cluster}
+par(mfrow = c(2,2))
+
+kmeans_partitioning <- lapply(2:20, function(clust_num) kmeans(dataset[, 1:2], clust_num))
+
+plot_grid(plotlist = lapply(c(1,4,14,19), function(k) {
+  ggplot(data = dataset, aes(x = x, y = y, color = as.factor(kmeans_partitioning[[k]]$cluster))) +
+    geom_point(show.legend = FALSE) +
+    ggtitle(paste0("kmeans, k = ", k+1))
+}), nrow = 2)
+
+
+hclust_tree <- hclust(dist(dataset[, 1:2]), method="ward.D")
+hclust_partitioning <- lapply(2:20, function(clust_num) cutree(hclust_tree, k=clust_num))
+
+plot_grid(plotlist = lapply(c(1,4,14,19), function(k) {
+  ggplot(data = dataset, aes(x = x, y = y, color = as.factor(hclust_partitioning[[k]]))) +
+    geom_point(show.legend = FALSE) +
+    ggtitle(paste0("hclust, k = ", k+1))
+}), nrow = 2)
+
+
+```
+
+# Indeksy
+
+Teraz dla każdej z klasteryzacji wyliczymy zestaw indeksów:
+
+* statystykę Randa,
+* współczynnik Jaccarda,
+* indeks Folkesa-Mallowsa,
+* indeks Dunna,
+* indeks Gamma,
+* indeks Daviesa-Bouldina.
+
+Pierwsze trzy wyliczymy za pomocą własnej implementacji funkcji na podstawie artykułu, pozostałe trzy natomiast korzystając z funkcji `intCriteria` z pakietu `clusterCrit`.
+
+```{r indicies}
+calculate_pairs <- function(C_parts, P_parts) {
+  N <- length(C_parts)
+  same_C_matrix <- outer(C_parts, C_parts, function(xi, xj) xi == xj)
+  same_P_matrix <- outer(P_parts, P_parts, function(xi, xj) xi == xj)
+  
+  ss_matrix <- same_C_matrix & same_P_matrix & upper.tri(same_C_matrix)
+  sd_matrix <- same_C_matrix & !same_P_matrix & upper.tri(same_C_matrix)
+  ds_matrix <- !same_C_matrix & same_P_matrix & upper.tri(same_C_matrix)
+  dd_matrix <- !same_C_matrix & !same_P_matrix & upper.tri(same_C_matrix)
+  
+  c(a = sum(ss_matrix), b = sum(sd_matrix), c = sum(ds_matrix), d = sum(dd_matrix))
+}
+
+calculate_external_indicies <- function(C_parts, P_parts) {
+  bs <- calculate_pairs(C_parts, P_parts)
+  N <- length(C_parts)
+  M <- N*(N-1)/2
+  inds <- numeric()
+  inds["Rand_Statistic"] <- (bs["a"] + bs["d"])/M
+  inds["Jaccard_Coefficient"] <- bs["a"]/(bs["a"] + bs["b"] + bs["c"])
+  inds["Folkes_and_Mallows_index"] <- bs["a"] / 
+    sqrt(as.numeric(bs["a"] + bs["b"]) * 
+           as.numeric(bs["a"] + bs["c"]))
+  #how to calculate Huberts_Gamma_index?
+  # how to calculate cpcc
+  inds
+}
+
+calculate_all_indicies <- function(dataset, P_parts, hclust_partitioning, kmeans_partitioning) {
+  maxclust <- 19
+  method <- rep(c("hclust", "kmeans"), each = maxclust)
+  k <- rep(2:(maxclust+1), 2)
+  ret <- data.frame(method = method, k = k)
+  for(k in 1:maxclust) {
+    C_parts <- hclust_partitioning[[k]]
+    ret[k, c("Rand", "Jaccard", "Folkes-Mallows", "Dunn", "Gamma", "Davies-Bouldin")] <- 
+      c(calculate_external_indicies(C_parts, P_parts), 
+        unlist(clusterCrit::intCriteria(
+          as.matrix(dataset),
+          C_parts, 
+          c("Dunn", "Gamma", "Davies_Bouldin"))))
+    C_parts <- kmeans_partitioning[[k]]$cluster
+    ret[k + maxclust, c("Rand", "Jaccard", "Folkes-Mallows", "Dunn", "Gamma", "Davies-Bouldin")] <- 
+      c(calculate_external_indicies(C_parts, P_parts), 
+        unlist(clusterCrit::intCriteria(
+          as.matrix(dataset),
+          C_parts, 
+          c("Dunn", "Gamma", "Davies_Bouldin"))))
+  }
+  ret
+}
+
+inds <- calculate_all_indicies(dataset[,1:2], dataset$label, 
+                      hclust_partitioning, kmeans_partitioning)
+```
+
+## hclust
+
+```{r tables}
+inds %>%
+  filter(method == "hclust") %>%
+  kable() %>%
+  kable_styling(bootstrap_options = "striped", full_width = F)
+
+ggplot(data = inds %>% 
+         filter(method == "hclust") %>% 
+         select(-method) %>% melt(id.vars = "k"),
+       aes(x = k, y= value, color = variable)) +
+  geom_line() +
+  geom_line(data = data.frame(x = c(15,15), y = c(1, 0)), aes(x = x, y = y),
+            linetype = "dotted", inherit.aes = FALSE) 
+
+```
+
+Możemy zauważyć, że indeksy są całkiem zgodne, co do wyboru optymalnego parametru *k*, czyli liczby klastrów -- jedynie indeks Dunna wskazuje na sugerowaną wartość *k* równą 17 lub 18 (indeksy Randa, Jaccarda, Folkesa-Mallowsa, Dunna oraz indeks gamma chcemy maksymalizować, indeks Daviesa-Bouldina minimalizować). Z wykresu całkiem wyraźnie wynika, że optimum znajduje się w 15 lub 16. Ponadto chciałbym wyróżnić kilka obserwacji:
+
+* Indeksy Randa i gamma przyjmują bardzo bliskie sobie wartości,
+* Indeks Dunna przyjmuje w tym przypadku wartości bardzo bliskie zera ($<0.02$),
+* Indeksy Jaccarda i Folkesa-Mallowsa mają bardzo podobną zmienność, ich wykresy wyglądają (w przybliżeniu) jak przesunięte o stałą.
+
+Przyjrzyjmy się jeszcze indeksowi Dunna w przybliżeniu:
+```{r dunn}
+ggplot(data = inds %>% 
+         filter(method == "hclust"),
+       aes(x = k, y= Dunn)) +
+  geom_line() +
+  geom_line(data = data.frame(x = c(15,15), y = c(0.02, 0)), aes(x = x, y = y),
+            linetype = "dotted", inherit.aes = FALSE) 
+
+```
+
+Widać, że dla *k* $=11, \dots, 16$ indeks zachowuje się odmiennie od pozostałych.
+
+## kmeans
+
+```{r tables 2}
+ggplot(data = inds %>% 
+         filter(method == "kmeans") %>% 
+         select(-method) %>% melt(id.vars = "k"),
+       aes(x = k, y= value, color = variable)) +
+  geom_line() +
+  geom_line(data = data.frame(x = c(15,15), y = c(1, 0)), aes(x = x, y = y),
+            linetype = "dotted", inherit.aes = FALSE) 
+
+inds %>%
+  filter(method == "kmeans") %>%
+  kable() %>%
+  kable_styling(bootstrap_options = "striped", full_width = F)
+
+```
+
+Dla algorytmu `kmeans` indeksy zachowują się bardziej chaotycznie, mają więcej lokalnych ekstremów. Wynika to z tego, jak wyglądają dane - `kmeans` najlepiej się sprawdza dla wyraźnie odseparowanych klastrów lub klastrów, które są sferopodobne, podczas gdy w naszych danych klastry w sporym stopniu nachodzą na siebie i mają różne kształty. 
+
+Indeksy Jaccarda, Folkesa-Mallowsa, gamma oraz Randa sugerowałyby *k* $=18$, Dunna -- *k* $=17$, Daviesa-Bouldina -- *k* $=13$. Trzy ciekawe obserwacje z indeksów dla `hclust` pozostają prawdziwe też tutaj. Co ciekawe, żaden z indeksów nie wskazał *k* $=15$ jako wartości bardziej optymalnej niż sąsiednie.
+
+```{r dunn2}
+ggplot(data = inds %>% 
+         filter(method == "kmeans"),
+       aes(x = k, y= Dunn)) +
+  geom_line() +
+  geom_line(data = data.frame(x = c(15,15), y = c(0.02, 0)), aes(x = x, y = y),
+            linetype = "dotted", inherit.aes = FALSE) 
+
+```
+
+Tym razem indeks Dunna zachowuje się bardziej zgodnie z pozostałymi.
+
+# Wnioski
+
+* Indeksy w ogólności są całkiem zgodne, choć jednak nie w stu procentach.
+
+* Nawet jeśli znamy zadaną z góry liczbę klastrów, to indeksy mogą dawać lepsze wyniki dla innej liczby -- to kwestia danych oraz algorytmu (w szczególności w tym przypadku `kmeans`).
+
+* Pomimo że indeks Randa wymaga "prawdziwego" zaetykietowania danych (indeks zewnętrzny), a indeks gamma etykiet nie wymaga (indeks wewnętrzny), oba dają bardzo podobne rezultaty. Niestety, nie mają one aż takiej zmienności jak pozostałe indeksy i trudno wyróżnić wyraźne globalne maksimum.
+
+* Podobnie rzecz się ma z indeksami Jaccarda/Folkesa-Mallowsa (zewnętrzne) oraz
+Daviesa-Bouldina (wewnętrzny) -- w pewnym stopniu dają one podobne wyniki, choć tutaj podobieństwo jest już mniejsze. W okolicy "prawdziwego" *k* pierwsze dwa indeksy osiągają lokalne minima tam, gdzie trzeci osiąga lokalne maksima i vice-versa (co oznacza, że niosą podobną informację -- Jaccarda/Folkesa-Mallowsa staramy się maksymalizować, Daviesa-Bouldina -- minimalizować). Globalne ekstrema przyjmują jednak w różnych punktach.
+
+* Wydaje się, że przy ostatecznym wyborze algorytmu/parametru należy się sugerować więcej niż jedną miarą i spojrzeć na co najmniej kilka indeksów. Jeśli posiadamy etykiety, najlepiej jest się sugerować nimi, choć to raczej rzadki przypadek.
+
+# Porównanie implementacji
+
+Jako że paczkę `clusterCrit` odkryłem dopiero po zaimplementowaniu samodzielnie kryteriów zewnętrznych, poniżej umieszczam jeszcze dowód, że implementacja jest poprawna - porównanie wyników wyliczania indeksów za pomocą funkcji własnych oraz funkcji z paczki:
+
+
+```{r compare}
+calculate_differences <- function(dataset, P_parts, hclust_partitioning, kmeans_partitioning, own_inds) {
+  maxclust <- 19
+  method <- rep(c("hclust", "kmeans"), each = maxclust)
+  k <- rep(2:(maxclust+1), 2)
+  ret <- data.frame(method = method, k = k)
+  for(k in 1:maxclust) {
+    C_parts <- hclust_partitioning[[k]]
+    ret[k, c("Rand", "Jaccard", "Folkes-Mallows")] <- 
+      unlist(clusterCrit::extCriteria(
+          P_parts,
+          C_parts,
+          c("Rand", "Jaccard", "Folkes_Mallows")
+      ))
+    C_parts <- kmeans_partitioning[[k]]$cluster
+    ret[k + maxclust, c("Rand", "Jaccard", "Folkes-Mallows")] <- 
+      unlist(clusterCrit::extCriteria(
+        P_parts,
+        C_parts,
+        c("Rand", "Jaccard", "Folkes_Mallows")
+      ))
+  }
+  ret[,3:5] <- ret[,3:5] - own_inds[,3:5]
+}
+
+inds2 <- calculate_differences(dataset[,1:2], dataset$label, 
+                               hclust_partitioning, kmeans_partitioning, inds)
+
+inds2 %>%
+  kable(digits = 15) %>%
+  kable_styling(bootstrap_options = "striped", full_width = F)
+```
+
+Jak widzimy, błędy są bliskie zeru i wynikają prawdopodobnie są kwestii numerycznych (jak np. kolejność obliczeń), których nie optymalizowałem.
