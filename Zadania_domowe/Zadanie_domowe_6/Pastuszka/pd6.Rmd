@@ -1,0 +1,126 @@
+---
+title: "Praca domowa 6"
+author: "Michał Pastuszka"
+date: "`r format(Sys.time(), '%d - %m - %Y')`"
+output:
+  html_document:
+    df_print: paged
+    toc: true
+    toc_float: true
+    code_folding: hide
+    number_sections: true
+---
+
+```{r setup, include=FALSE}
+set.seed(42, "L'Ecuyer")
+knitr::opts_chunk$set(echo = FALSE)
+library(mlr)
+library(dendextend)
+library(fpc)
+library(profdpm)
+dane <- iris[, -5]
+klasy <- as.numeric(iris$Species)
+```
+
+# Wstęp
+
+W tej pracy domowej będziemy analizować kilka metod oceny jakości klasteryzacji, opisanych w pracy "On Clustering Validation Techniques" - https://www.researchgate.net/publication/2500099_On_Clustering_Validation_Techniques. Skorzystamy ze zbioru iris i będziemy porównywać algorytmy `kmeans` i `hclust`.
+
+# Statystyki jakości klasteryzacji
+
+## Statystyki porównawcze
+
+Ponieważ wiemy, że nasze dane opisują trzy gatunki irysów i znamy ich etykiety, możemy skorzystać ze statystyk opisujących podobieństwo dwóch grupowań.
+
+```{r clustering}
+task <- makeClusterTask(id = "iris", dane)
+hclusters <- hclust(dist(dane))
+kmeansLabels <- matrix(nrow = 5, ncol = nrow(iris))
+hclustLabels <- kmeansLabels
+for(i in 2:6){
+  hclustLabels[i-1,] <- cutree(hclusters, i)
+  kmeansLearner <- makeLearner("cluster.kmeans", par.vals = list(centers = i))
+  kmeansLearned <- train(kmeansLearner, task)
+  kmeansLabels[i-1,] <- predict(kmeansLearned, task)$data$response
+}
+```
+
+### Fowlkes–Mallows index
+$$FM={\sqrt {{\frac {TP}{TP+FP}}\cdot {\frac {TP}{TP+FN}}}}$$
+gdzie TP - true positives, FP - false positives, FN - false negatives, przy czym za true positive uważamy każdą parę punktów, które poprawnie zostały zakwalifikowane do jednego klastra, a true negative parę, która poprawnie znajduje się w innych klastrach.
+ 
+```{r fmindex}
+fmIndexHclust <- apply(hclustLabels, 1, function(x) {FM_index_profdpm(klasy, x)[1]})
+fmIndexKmeans <- apply(kmeansLabels, 1, function(x) {FM_index_profdpm(klasy, x)[1]})
+
+fmIndex <- cbind(2:6, fmIndexHclust, fmIndexKmeans)
+colnames(fmIndex) <- c("Liczba klastrów", "hclust", "kmeans")
+
+knitr::kable(fmIndex, row.names = FALSE, caption = "Fowlkes-Mallows index względem oryginalnych etykiet")
+```
+
+Jak można się spodziewać, najlepsze wyniki otrzymujemy dla trzech klastrów. W tym przypadku dla każdej liczby klastrów lepsze wyniki otrzymuje algorytm k średnich.
+
+
+```{r getstat}
+getStat <- function(x){
+  statHclust <- apply(hclustLabels, 1, function(y) cluster.stats(dist(dane), y, klasy)[[x]])
+  statKmeans <- apply(kmeansLabels, 1, function(y) cluster.stats(dist(dane), y, klasy)[[x]])
+
+  stat <- cbind(2:6, statHclust, statKmeans)
+  colnames(stat) <- c("Liczba klastrów", "hclust", "kmeans")
+  stat
+}
+```
+
+### Rand index
+
+$$R=\frac{TP+TN}{TP+TN+FP+FN} $$
+
+```{r rand}
+randIndex <- getStat("corrected.rand")
+knitr::kable(randIndex, row.names = FALSE, caption = "Rand index względem oryginalnych etykiet")
+```
+
+Tak samo jak poprzednio otrzymujemy lepsze wyniki dla kmeans i maksimum w trzech klastrach.
+
+## Statystyki nieporównawcze
+
+W przypadku klasteryzacji najczęściej nie dysponujemy etykietami, z którymi możemy porównać nasze wyniki. Omówimy więc teraz kilka statystyk nie wymagających takiej wiedzy.
+
+### Dunn index
+
+Rodzina statystyk opartych na statystyce Dunna pozwala identyfikować zwarte i dobrze odzielone klastry. Skorzystamy z dwóch funkcji z tej rodziny:
+
+```{r dunn}
+dunnIndex <- getStat("dunn")
+knitr::kable(dunnIndex, row.names = FALSE, caption = "minimum separation / maximum diameter")
+```
+
+Statystyka osiąga maksimum dla czterech klastrów, a wyższe wartości osiąga hclust.
+
+```{r dunn2}
+dunn2Index <- getStat("dunn2")
+knitr::kable(dunn2Index, row.names = FALSE, caption = "inimum average dissimilarity between two cluster / maximum average within cluster dissimilarity")
+```
+
+Tu wyraźne maksimum osiągamy dla dwóch klastrów. Może to wynikać z tego, że jedna z odmian irysów (setosa) w zbiorze wyraźnie oddziela się od pozostałych. Dodatkowo dla każdej liczby klastrów z wyjątkiem czterech, lepsze wyniki uzyskuje kmeans, co jest bliższe wynikom otrzymanym dla metod porównujących podział z oryginalnymi etykietami.
+
+### Znormalizowana statystyka gamma
+
+$$\Gamma=(1/M)\sum\limits_{i=1}^{N-1}\sum\limits_{j=i+1}^{N}P(i,j)Q(i,j)$$
+
+gdzie $N$ - liczba punktów, $M=N(N-1)/2$, $P$ - macierz odległości, $Q$ - macierz w której element $(i,j)$, jest odległością między punktami reprezentatywnymi klastrów, do których należą punkty $x_i$ i $x_j$.
+
+Skorzystamy ze znormalizowanej wersji tej statystyki.
+
+```{r gamma}
+gammaIndex <- getStat("pearsongamma")
+knitr::kable(gammaIndex, row.names = FALSE, caption = "Normalized gamma")
+```
+
+Tutaj wyniki są mniej jednoznaczne. Różne algorytmy otrzymują wyższe wyniki dla różnych liczb klastrów. Dodatkowo hclust otrzymuje najwyższy wynik dla trzech, a kmeans dwóch klastrów.
+
+# Podsumowanie
+
+Ocenienie jakości zgrupowania okazuje się dość trudnym zadaniem, szczególnie, gdy nie posiadamy etykiet do porównania. Zależnie od użytych metod możemy otrzymać różne wyniki, które nie muszą być zgodne z naturalnym podziałem danych. Należy więc analizować różne statystyki, aby prawidłowo wybrać algorytm i liczbę klastrów odpowiednią dla naszych danych.
