@@ -1,0 +1,167 @@
+---
+title: "HubertBanieckiPd5"
+author: "Hubert Baniecki"
+date: "28 04 2019"
+output:
+  html_document:
+    df_print: paged
+    toc: true
+    toc_float: true
+    code_folding: hide
+    number_sections: true
+---
+
+```{r setup, include=FALSE, warning=FALSE, cache = TRUE}
+knitr::opts_chunk$set(warning=FALSE, message=FALSE, error=FALSE)
+library(DALEX)
+library(dplyr)
+library(cvAUC)
+library(mlr)
+library(rpart.plot)
+```
+
+# Dane
+
+W tej pracy domowej przetestuję implementacje modelu drzew `rpart` w R. </br>
+Do testów wykorzystam dane `titanic` z pakietu `DALEX`.
+
+```{r}
+head(titanic)
+dim(titanic)
+
+df <- titanic
+df$survived <- as.factor(ifelse(df$survived == "yes", 1, 0))
+df$gender <- as.numeric(df$gender)
+df$class <- as.numeric(df$class)
+df$embarked <- as.numeric(df$embarked)
+df$country <- as.numeric(df$country)
+
+set.seed(1234)
+ind <- sample(2207, round(0.7*2207))
+train <- df[ind,]
+test <- df[-ind,]
+```
+
+Podzieliłem dane na zbiór treningowy i testowy (70%/30%). Będziemy przewidywać kolumnę binarną `survived`.
+
+# Model drzew
+
+```{r}
+library(rpart)
+```
+
+## Default
+
+Najpierw sprawdźmy jak poradzi sobie model z parametrami domyślnymi, zaproponowanymi przez twórców pakietu.
+
+```{r}
+fit1 <- rpart(survived ~. , method = "class", data = train)
+
+pred1 <- predict(fit1, newdata = test, type = "prob")
+auc1 <- AUC(pred1[,2], test$survived)
+auc1
+```
+
+## Proponowane hiperparametry
+
+Teraz przetestujmy model na parametrach zaproponowanych w pracy naukowej.
+
+```{r}
+parameters <- rpart.control(minsplit = 24, minbucket = 12, cp = 0, maxdepth = 21)
+
+list(cp = 0, maxdepth = 21, minbucket = 12, minsplit = 24)
+
+fit2 <- rpart(survived ~. , method = "class", data = train, control = parameters)
+
+pred2 <- predict(fit2, newdata = test, type = "prob")
+auc2 <- AUC(pred2[,2], test$survived)
+auc2
+```
+
+Jak widać wynik `AUC` znacznie się poprawił.
+
+## Random search
+
+W celu znalezienia optymalnych parametrów użyję przeszukiwania losowego. </br>
+Zobaczmy, czy po 600 iteracjach dostaniemy lepszy wynik.
+
+```{r}
+clearn <- makeLearner("classif.rpart", predict.type = "prob")
+task <- makeClassifTask(id = "task", data = train, target = "survived")
+
+cv <- makeResampleDesc("CV", iters = 10)
+
+ps <- makeParamSet(
+  makeNumericParam("cp", lower = 0.00000001, upper = 0.2),
+  makeIntegerParam("maxdepth", lower = 3, upper = 30),
+  makeIntegerParam("minbucket", lower = 3, upper = 50),
+  makeIntegerParam("minsplit", lower = 3, upper = 50)
+)
+ctrlRandom <- makeTuneControlRandom(maxit = 600L)
+
+res <- tuneParams(clearn, task = task, measures = auc,
+                  resampling = cv, par.set = ps, control = ctrlRandom)
+
+res$x
+
+fit3 <-  rpart(survived ~. , method = "class", data = train, control = res$x)
+
+pred3 <- predict(fit3, newdata = test, type = "prob")
+auc3 <- AUC(pred3[,2], test$survived)
+auc3
+
+predx <- predict(fit3, newdata = train, type = "prob")
+aucx <- AUC(predx[,2], train$survived)
+aucx
+
+```
+
+# Najlepszy model
+
+Po dużej liczbie iteracji znaleźliśmy lepsze parametry, ale bardzo niewiele zyskaliśmy.
+
+## Rysunek drzewa
+
+Poniżej rysunek drzewa najlepszego modelu. </br>
+Wydaje się, że zmienne `age`, `gender` i `class` miały największe znaczenie przy podziale.
+
+```{r fig.width = 10, fig.height= 10, fig.align="center"}
+rpart.plot(fit3, uniform = TRUE )
+```
+
+## Reguły decyzyjne 
+
+Poniżej reguły decyzyjne zilustrowane na wykresie wyżej.
+
+```{r}
+print(fit3)
+```
+
+# Kryterium podziału drzew
+
+Na koniec zobaczmy jak kryterium podziału wpłynie na wynik modelu. </br>
+Użyję parametrów, które dały poprzednio najlepsze `AUC`.
+
+## Information Gain
+
+```{r}
+fit4 <- rpart(survived ~. , method="class", data = train, control = res$x, parms = list(split = 'information'))
+
+pred4 <- predict(fit4, newdata = test, type = "prob")
+auc4 <- AUC(pred4[,2], test$survived)
+auc4
+```
+
+## Gini
+
+```{r}
+fit5 <- rpart(survived ~. , method="class", data = train, control = res$x, parms = list(split = 'gini'))
+
+pred5 <- predict(fit5, newdata = test, type = "prob")
+auc5 <- AUC(pred5[,2], test$survived)
+auc5
+```
+
+Zmiana kryterium podziału na Information Gain wyniosła nasz model powyżej `79% AUC`. </br>
+Warto dodać, że model ten działa bardzo szybko w porównaniu z bardziej skomplikowanymi. </br>
+Łatwo go też wyjaśnić za pomocą reguł lub rysunku.
