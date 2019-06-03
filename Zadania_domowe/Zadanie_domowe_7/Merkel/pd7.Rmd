@@ -1,0 +1,178 @@
+---
+title: "PD7"
+author: "Witold Merkel"
+date: "`r format(Sys.time(), '%d - %m - %Y')`"
+output:
+  html_document:
+    df_print: paged
+    toc: true
+    toc_float: true
+    code_folding: hide
+    number_sections: true
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(clue)
+library(factoextra)
+library(pdp)
+library(clValid)
+library(rbenchmark)
+library(kableExtra)
+
+data <- read.csv('heart.csv')
+data <- na.omit(data)
+data <- scale(as.matrix(data))
+
+
+wssplot <- function(data, nc=15, seed=1){
+  wss <- (nrow(data)-1)*sum(apply(data,2,var))
+  for (i in 2:nc){
+    set.seed(seed)
+    wss[i] <- sum(kmeans(data, centers=i)$withinss)}
+  plot(1:nc, wss, type="b", xlab="Number of Clusters",
+       ylab="Within groups sum of squares")}
+
+# PAM == KMETOIDS
+
+kmeans2 <- eclust(data, "kmeans", k = 2, k.max = 1, graph = FALSE)
+kmeans3 <- eclust(data, "kmeans", k = 3, k.max = 1, graph = FALSE)
+kmeans4 <- eclust(data, "kmeans", k = 4, k.max = 1, graph = FALSE)
+kmeans5 <- eclust(data, "kmeans", k = 5, k.max = 1, graph = FALSE)
+kmeans6 <- eclust(data, "kmeans", k = 6, k.max = 1, graph = FALSE)
+kmeans7 <- eclust(data, "kmeans", k = 7, k.max = 1, graph = FALSE)
+kmeans8 <- eclust(data, "kmeans", k = 8, k.max = 1, graph = FALSE)
+kmeans9 <- eclust(data, "kmeans", k = 9, k.max = 1, graph = FALSE)
+kmeans10 <- eclust(data, "kmeans", k = 10, k.max = 10, graph = FALSE)
+
+pkmeans2 <- fviz_cluster(kmeans2, geom = "point", data = data, shape = 20) +
+  ggtitle("kmeans k = 2") + theme(legend.position = "none") + xlab("")
+pkmeans3 <- fviz_cluster(kmeans3, geom = "point",  data = data, shape = 20) +
+  ggtitle("kmeans k = 3") + theme(legend.position = "none") + xlab("")
+pkmeans4 <- fviz_cluster(kmeans4, geom = "point",  data = data, shape = 20) +
+  ggtitle("kmeans k = 4") + theme(legend.position = "none") + xlab("")
+pkmeans5 <- fviz_cluster(kmeans5, geom = "point",  data = data, shape = 20) +
+  ggtitle("kmeans k = 5") + theme(legend.position = "none") + xlab("")
+pkmeans6 <- fviz_cluster(kmeans6, geom = "point",  data = data, shape = 20) +
+  ggtitle("kmeans k = 6") + theme(legend.position = "none") + xlab("")
+pkmeans7 <- fviz_cluster(kmeans7, geom = "point",  data = data, shape = 20) +
+  ggtitle("kmeans k = 7") + theme(legend.position = "none") +  xlab("")
+pkmeans8 <- fviz_cluster(kmeans8, geom = "point",  data = data, shape = 20) +
+  ggtitle("kmeans k = 8") + theme(legend.position = "none") +  xlab("")
+pkmeans9 <- fviz_cluster(kmeans9, geom = "point",  data = data, shape = 20) +
+  ggtitle("kmeans k = 9") + theme(legend.position = "none") +  xlab("") 
+pkmeans10 <- fviz_cluster(kmeans10, geom = "point",  data = data, shape = 20) +
+  ggtitle("kmeans k = 10") + theme(legend.position = "none") 
+
+pam2 <- eclust(data, "pam", k = 2, k.max = 1, graph = FALSE)
+pam3 <- eclust(data, "pam", k = 3, k.max = 1, graph = FALSE)
+pam4 <- eclust(data, "pam", k = 4, k.max = 1, graph = FALSE)
+pam5 <- eclust(data, "pam", k = 5, k.max = 1, graph = FALSE)
+pam6 <- eclust(data, "pam", k = 6, k.max = 1, graph = FALSE)
+pam7 <- eclust(data, "pam", k = 7, k.max = 1, graph = FALSE)
+pam8 <- eclust(data, "pam", k = 8, k.max = 1, graph = FALSE)
+pam9 <- eclust(data, "pam", k = 9, k.max = 1, graph = FALSE)
+pam10 <- eclust(data, "pam", k = 10, k.max = 10, graph = FALSE)
+
+
+ppam2 <- fviz_cluster(pam2, geom = "point", data = data, shape = 20) +
+  ggtitle("pam k = 2") + theme(legend.position = "none") + ylab("") + xlab("")
+ppam3 <- fviz_cluster(pam3, geom = "point",  data = data, shape = 20) +
+  ggtitle("pam k = 3") + theme(legend.position = "none") + ylab("") + xlab("")
+ppam4 <- fviz_cluster(pam4, geom = "point",  data = data, shape = 20) +
+  ggtitle("pam k = 4") + theme(legend.position = "none") + ylab("") + xlab("")
+ppam5 <- fviz_cluster(pam5, geom = "point",  data = data, shape = 20) +
+  ggtitle("pam k = 5") + theme(legend.position = "none") + ylab("") + xlab("")
+ppam6 <- fviz_cluster(pam6, geom = "point",  data = data, shape = 20) +
+  ggtitle("pam k = 6") + theme(legend.position = "none") + ylab("") + xlab("")
+ppam7 <- fviz_cluster(pam7, geom = "point",  data = data, shape = 20) +
+  ggtitle("pam k = 7") + theme(legend.position = "none") + ylab("") + xlab("")
+ppam8 <- fviz_cluster(pam8, geom = "point",  data = data, shape = 20) +
+  ggtitle("pam k = 8") + theme(legend.position = "none") + ylab("") + xlab("")
+ppam9 <- fviz_cluster(pam9, geom = "point",  data = data, shape = 20) +
+  ggtitle("pam k = 9") + theme(legend.position = "none") + ylab("") + xlab("")
+ppam10 <- fviz_cluster(pam10, geom = "point",  data = data, shape = 20) +
+  ggtitle("pam k = 10") + theme(legend.position = "none") + ylab("")
+
+wiedza <- clValid(data, nClust = 2:9, clMethods=c("kmeans","pam"), validation = 'internal', verbose = FALSE)
+```
+
+# Wprowadzenie
+
+W tej pracy dowmowej sprawdzimy jak różnią sie algoytmy `k-means` i `k-metoids`. Będziemy korzystać z funkcji `eclust`, w niej można wybrać jakie algotrymy będziemy używać.
+
+Najpierw sprawdźmy jak wyglądają różne podziały.
+
+```{r}
+grid.arrange(pkmeans2,ppam2, pkmeans3,ppam3,
+             nrow = 2)
+grid.arrange(pkmeans4,ppam4, pkmeans5,ppam5,
+             nrow = 2)
+grid.arrange(pkmeans6,ppam6, pkmeans7,ppam7,
+             nrow = 2)
+grid.arrange(pkmeans8,ppam8, pkmeans8,ppam8,
+             nrow = 2)
+grid.arrange(pkmeans10,ppam10,
+             nrow = 1)
+```
+
+Widać na oko, że najsensowniejszy jest podział na 2 klastry, zweryfikujemy to jeszcze.
+
+# Optymalna licza klastrów
+
+Sprawdzimy na pare sposobów jaka liczba klastrów jest najlepsza dla tego zbioru i tych algorytmów.
+
+```{r}
+fviz_nbclust(data, kmeans, method = "wss") +
+    geom_vline(xintercept = 2, linetype = 2)+
+  labs(title = "Elbow method", subtitle = "for Kmeans")
+
+fviz_nbclust(data, pam, method = "wss") +
+    geom_vline(xintercept = 2, linetype = 2)+
+  labs(title = "Elbow method", subtitle = "for Pam")
+```
+
+Z tych wykresów widać, że rzeczywiście liczba klastrów równa dwa jest optymalna, przyjżyjmy się jeszcze innym statystykom.
+
+```{r}
+op <- par(no.readonly=TRUE)
+par(mfrow=c(2,2),mar=c(4,4,3,1))
+plot(wiedza, legend=FALSE)
+plot(nClusters(wiedza),measures(wiedza,"Dunn")[,,1],type="n",axes=F,xlab="",ylab="")
+legend("center", clusterMethods(wiedza), col=1:9, lty=1:9, pch=paste(1:9))
+```
+
+Po przyjrzeniu się tym wykresom już nie ma wątpliwości, że optymalna liczba to 2. Widać, również że algorytm `k-means` okazał się lepszy pod względem dwóch statystyk, można zatem postawić hipotezę, że jest ogólnie lepszy, a co za tym idzie będzie szybciej zbiegał.
+
+# Porównanie klastrów i ich centrów
+
+```{r}
+fviz_cluster(kmeans2, geom = "point", data = data, shape = 20, show.clust.cent=TRUE,
+             stand=T, pointsize = 3, ellipse.type='confidence') +
+  ggtitle("kmeans k = 2") + theme(legend.position = "none") + xlab("")
+
+fviz_cluster(pam2, geom = "point", data = data, shape = 20, show.clust.cent=TRUE,
+             stand=T, pointsize = 3, ellipse.type='confidence') +
+  ggtitle("kmeans k = 2") + theme(legend.position = "none") + xlab("")
+```
+
+Jeżeli chodzi o podział zbioru, to lepiej wypada algorytm `kmeans`. Podział otrzymany w ten sposób jest dużo bardziej rozłączny, co widać gołym okiem.
+
+Centra nie znajdują się w dokładnie tych samych miejscach, ale żeby to zauważyć trzeba się mocno przyjżejć.
+
+# Szybkość zbieżności
+
+W celu porównania szybkości zbieżności tych algorytmów zrobimy benchmark dla 200 wywołań.
+
+```{r}
+kable_styling(kable(benchmark("kmeans" = {
+           hc <- data %>% eclust("kmeans", k = 2, graph = FALSE)
+          },'pam'= {
+          hc <- data %>% eclust("pam", k = 2, graph = FALSE)
+          },
+          replications = 200,
+          columns = c("test", "replications", "elapsed",
+                      "relative", "user.self", "sys.self"))))
+```
+
+Widać, że zdecydowanie szybszy jest algorytm `kmeans`, potwierdza to naszą hipoteze z wczesniej, że w tym konkretnym przypadku jest lepszy.

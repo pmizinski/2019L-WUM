@@ -1,0 +1,256 @@
+---
+title: "HubertBanieckiPd6"
+author: "Hubert Baniecki"
+date: "`r format(Sys.time(), '%d %B, %Y')`"
+output:
+  html_document:
+    df_print: paged
+    toc: true
+    toc_float: true
+    code_folding: hide
+    number_sections: true
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(warning=FALSE, message=FALSE, error=FALSE)
+library(clusterCrit)
+library(tidyverse)
+library(cluster)
+library(factoextra)
+library(gridExtra)
+library(ggpubr)
+library(genie)
+
+library(fpc)
+library(NbClust)
+```
+
+# Dane
+
+Do badania klasteryzacji wybrałem sztucznie wygenerowany zbiór `Aggregation` składający się z dwóch współrzędnych v1 i v2.
+Powinien dzielić się na 7 klas, które są znane. 
+Sprawdzę jak wygląda proces klasteryzacji trzech algorytmów `kmeans` i `hclust`, a potem porównam statystyki jakości pogrupowania danych dla paru liczb klastrów. </br>
+Jako metrykę przyjmuję euklidesową, ponieważ wydaje się być najbardziej sensowna dla tego zbioru danych.
+
+```{r}
+data <- read.table("Aggregation.data")
+labels <- read.table("Aggregation.labels")
+df <- data
+
+df <- scale(as.matrix(df))
+```
+
+# Wizualizacja modeli klasteryzacji
+
+```{r fig.height= 36, fig.width= 10}
+
+k2 <- eclust(df, "kmeans", k = 2, k.max = 1, graph = FALSE)
+k3 <- eclust(df, "kmeans", k = 3, k.max = 1, graph = FALSE)
+k4 <- eclust(df, "kmeans", k = 4, k.max = 1, graph = FALSE)
+k5 <- eclust(df, "kmeans", k = 5, k.max = 1, graph = FALSE)
+k6 <- eclust(df, "kmeans", k = 6, k.max = 1, graph = FALSE)
+k7 <- eclust(df, "kmeans", k = 7, k.max = 1, graph = FALSE)
+k8 <- eclust(df, "kmeans", k = 8, k.max = 1, graph = FALSE)
+k9 <- eclust(df, "kmeans", k = 9, k.max = 1, graph = FALSE)
+k10 <- eclust(df, "kmeans", k = 10, k.max = 10, graph = FALSE)
+
+pk2 <- fviz_cluster(k2, geom = "point", data = df, shape = 20) +
+  ggtitle("kmeans k = 2") + theme(legend.position = "none") + xlab("")
+pk3 <- fviz_cluster(k3, geom = "point",  data = df, shape = 20) +
+  ggtitle("kmeans k = 3") + theme(legend.position = "none") + xlab("")
+pk4 <- fviz_cluster(k4, geom = "point",  data = df, shape = 20) +
+  ggtitle("kmeans k = 4") + theme(legend.position = "none") + xlab("")
+
+pk5 <- fviz_cluster(k5, geom = "point",  data = df, shape = 20) +
+  ggtitle("kmeans k = 5") + theme(legend.position = "none") + xlab("")
+pk6 <- fviz_cluster(k6, geom = "point",  data = df, shape = 20) +
+  ggtitle("kmeans k = 6") + theme(legend.position = "none") + xlab("")
+pk7 <- fviz_cluster(k7, geom = "point",  data = df, shape = 20) +
+  ggtitle("kmeans k = 7") + theme(legend.position = "none") +  xlab("")
+
+pk8 <- fviz_cluster(k8, geom = "point",  data = df, shape = 20) +
+  ggtitle("kmeans k = 8") + theme(legend.position = "none") +  xlab("")
+pk9 <- fviz_cluster(k9, geom = "point",  data = df, shape = 20) +
+  ggtitle("kmeans k = 9") + theme(legend.position = "none") +  xlab("") 
+pk10 <- fviz_cluster(k10, geom = "point",  data = df, shape = 20) +
+  ggtitle("kmeans k = 10") + theme(legend.position = "none") 
+
+h2 <- eclust(df, "hclust", k = 2, k.max = 1, graph = FALSE)
+h3 <- eclust(df, "hclust", k = 3, k.max = 1, graph = FALSE)
+h4 <- eclust(df, "hclust", k = 4, k.max = 1, graph = FALSE)
+h5 <- eclust(df, "hclust", k = 5, k.max = 1, graph = FALSE)
+h6 <- eclust(df, "hclust", k = 6, k.max = 1, graph = FALSE)
+h7 <- eclust(df, "hclust", k = 7, k.max = 1, graph = FALSE)
+h8 <- eclust(df, "hclust", k = 8, k.max = 1, graph = FALSE)
+h9 <- eclust(df, "hclust", k = 9, k.max = 1, graph = FALSE)
+h10 <- eclust(df, "hclust", k = 10, k.max = 10, graph = FALSE)
+
+
+ph2 <- fviz_cluster(h2, geom = "point", data = df, shape = 20) +
+  ggtitle("hclust k = 2") + theme(legend.position = "none") + ylab("") + xlab("")
+ph3 <- fviz_cluster(h3, geom = "point",  data = df, shape = 20) +
+  ggtitle("hclust k = 3") + theme(legend.position = "none") + ylab("") + xlab("")
+ph4 <- fviz_cluster(h4, geom = "point",  data = df, shape = 20) +
+  ggtitle("hclust k = 4") + theme(legend.position = "none") + ylab("") + xlab("")
+
+ph5 <- fviz_cluster(h5, geom = "point",  data = df, shape = 20) +
+  ggtitle("hclust k = 5") + theme(legend.position = "none") + ylab("") + xlab("")
+ph6 <- fviz_cluster(h6, geom = "point",  data = df, shape = 20) +
+  ggtitle("hclust k = 6") + theme(legend.position = "none") + ylab("") + xlab("")
+ph7 <- fviz_cluster(h7, geom = "point",  data = df, shape = 20) +
+  ggtitle("hclust k = 7") + theme(legend.position = "none") + ylab("") + xlab("")
+
+ph8 <- fviz_cluster(h8, geom = "point",  data = df, shape = 20) +
+  ggtitle("hclust k = 8") + theme(legend.position = "none") + ylab("") + xlab("")
+ph9 <- fviz_cluster(h9, geom = "point",  data = df, shape = 20) +
+  ggtitle("hclust k = 9") + theme(legend.position = "none") + ylab("") + xlab("")
+ph10 <- fviz_cluster(h10, geom = "point",  data = df, shape = 20) +
+  ggtitle("hclust k = 10") + theme(legend.position = "none") + ylab("") 
+
+grid.arrange(pk2,ph2, pk3,ph3,
+             pk4,ph4, pk5,ph5,
+             pk6,ph6, pk7,ph7,
+             pk8,ph8, pk9,ph9,
+             pk10,ph10,
+             nrow = 9)
+```
+
+Z powyższego porównania wydaje się, że algorytm hierarchiczny poradził sobie lepiej z klasteryzacją tego zbioru. </br>
+Dalej sprawdzę to przy pomocy odpowiednich statystyk, dla k = 4,7,10.
+
+# Statystyki Zewnętrzne
+
+Najpierw wykorzystam wiedzę o prawdziwych etykietach w tym zbiorze, żeby sprawdzić jak efektywna jest klasteryzacja.
+
+```{r}
+k4_stats <- cluster.stats(d = dist(df), alt.clustering = unlist(labels), cluster = k4$cluster)
+k7_stats <- cluster.stats(d = dist(df), alt.clustering = unlist(labels), cluster = k7$cluster)
+k10_stats <- cluster.stats(d = dist(df), alt.clustering = unlist(labels), cluster = k10$cluster)
+
+h4_stats <- cluster.stats(d = dist(df), alt.clustering = unlist(labels), cluster = h4$cluster)
+h7_stats <- cluster.stats(d = dist(df), alt.clustering = unlist(labels), cluster = h7$cluster)
+h10_stats <- cluster.stats(d = dist(df), alt.clustering = unlist(labels), cluster = h10$cluster)
+```
+
+## Index Randa
+
+Jest to bardziej rozwinięte accuracy. Liczymy ile par punktów jest w tym samym klastrze (i powinno być) oraz ile par punktów jest w różnych klastrach (i powinno być), wykorzystujemy do tego etykiety. Dzielimy sumę tych liczb przez liczbę możliwych par n elementowego zbioru. Im większy indeks tym lepsze pogrupowanie.
+
+```{r}
+knitr::kable(round(data.frame(k4 = k4_stats$corrected.rand, k7 = k7_stats$corrected.rand, k10 = k10_stats$corrected.rand), 3))
+knitr::kable(round(data.frame(h4 = h4_stats$corrected.rand, h7 = h7_stats$corrected.rand, h10 = h10_stats$corrected.rand), 3))
+```
+
+Algorytm `kmeans` najlepiej poradził sobie dla 4 klastrów, a `hclust` dla 7 klastrów. Bardzo dobry wynik na poziomie 0.8 potwierdza to, co możemy zaobserwować na odpowiednim obrazku.
+
+# Statystyki Wewnętrzne
+Policzę inne statystyki jakości klasteryzacji, używając tylko wiedzy o zbiorze danych (bez etykiet).
+
+
+## Silhouette
+
+Liczymi średnią odległość pomiędzy ustalonym punktem, a innymi punktami w tym klastrze.
+Liczymy średnią odległość pomiędzy ustalonym punktem, a innymi punktami w najbliższym sąsiednim klastrze.
+Liczymy iloraz różnicy tych odległości i większej z nich.
+
+```{r fig.height= 5, fig.width= 10, cache = TRUE}
+pk1 <- fviz_silhouette(k4, palette = "jco",
+                ggtheme = theme_minimal(), print.summary = FALSE)+ theme(legend.position = "none") +
+  ggtitle("kmeans k=4 avg. silhouette width: 0.54")
+pk2 <- fviz_silhouette(k7, palette = "jco",
+                ggtheme = theme_minimal(), print.summary = FALSE)+ theme(legend.position = "none") +
+  ggtitle("kmeans k=7 avg. silhouette width: 0.45")
+pk3 <- fviz_silhouette(k10, palette = "jco",
+                ggtheme = theme_minimal(), print.summary = FALSE) + theme(legend.position = "none") +
+  ggtitle("kmeans k=10 avg. silhouette width: 0.47")
+
+ph1 <- fviz_silhouette(h4, palette = "jco",
+                ggtheme = theme_minimal(), print.summary = FALSE)+ theme(legend.position = "none") +
+  ggtitle("hclust k=4 avg. silhouette width: 0.54")
+ph2 <- fviz_silhouette(h7, palette = "jco",
+                ggtheme = theme_minimal(), print.summary = FALSE)+ theme(legend.position = "none") +
+  ggtitle("hclust k=7 avg. silhouette width: 0.45")
+ph3 <- fviz_silhouette(h10, palette = "jco",
+                ggtheme = theme_minimal(), print.summary = FALSE)+ theme(legend.position = "none") +
+  ggtitle("hclust k=10 avg. silhouette width: 0.44")
+```
+
+```{r fig.height= 5, fig.width= 10, cache = TRUE}
+grid.arrange(pk1,ph1, nrow = 1)
+```
+
+```{r fig.height= 5, fig.width= 10, cache = TRUE}
+grid.arrange(pk2,ph2, nrow = 1)
+```
+
+```{r fig.height= 5, fig.width= 10, cache = TRUE}
+grid.arrange(pk3,ph3, nrow = 1)
+```
+
+Możemy zauważyć, że `hclust` z czasem zaczął błędnie groupować obserwacje. Świadczy o tym ujemny silhouette.
+Obydwa algorytmy uzyskują lepsze wyniki dla mniejszej liczby klastrów, niż przewidują etykiety.
+
+## Dunn index
+
+Chcemy maksymalizować indeks Dunna, który jest ilorazem minimalnej odległości pomiędzy klastrami i maksymalnej odległości pomiędzy dwoma punktami w klastrze.
+
+
+```{r}
+knitr::kable(round(data.frame(k4 = k4_stats$dunn, k7 = k7_stats$dunn, k10 = k10_stats$dunn), 3))
+knitr::kable(round(data.frame(h4 = h4_stats$dunn, h7 = h7_stats$dunn, h10 = h10_stats$dunn), 3))
+```
+
+Dla algorytmu `hclust` 10 klastrów wydaje się być najlepszym pogrupowaniem.
+
+## Davies-Bouldin index
+
+Pakiet `clusterCrit` zawiera chyba wszystkie możliwe miary klasteryzacji. Weźmy index D-B z artykułu.
+
+```{r}
+temp1 <- intCriteria(traj  = df, part = k4$cluster, crit = "Davies_Bouldin")
+temp2 <- intCriteria(traj  = df, part = k7$cluster, crit = "Davies_Bouldin")
+temp3 <- intCriteria(traj  = df, part = k10$cluster, crit = "Davies_Bouldin")
+
+temp4 <- intCriteria(traj  = df, part = h4$cluster, crit = "Davies_Bouldin")
+temp5 <- intCriteria(traj  = df, part = h7$cluster, crit = "Davies_Bouldin")
+temp6 <- intCriteria(traj  = df, part = h10$cluster, crit = "Davies_Bouldin")
+
+knitr::kable(round(data.frame(k4 = unlist(unname(temp1)), k7 = unlist(unname(temp2)), k10 = unlist(unname(temp3))), 3))
+knitr::kable(round(data.frame(h4 = unlist(unname(temp4)), h7 = unlist(unname(temp5)), h10 = unlist(unname(temp6))), 3))
+```
+
+Jest to miara podobieństwa pomiędzy klastrami. Chcemy ją minimalizować. Ponownie możemy zauważyć, że najlepszym pogrupowaniem wydaje się być to z mniejszą liczbą klastrów. 
+
+## Znalezienie najlepszej liczby klastrów
+
+Agregując wszystkie poniższe wykresy można ustalić, że najlepiej wybrać 4 klastry.
+
+```{r fig.height= 15, fig.width= 10, cache = TRUE}
+pk1 <- fviz_nbclust(df, kmeans, method = "wss") +
+    geom_vline(xintercept = 4, linetype = 2)+ ggtitle("") + 
+  labs(subtitle = "Elbow method for kmeans")
+
+pk2 <- fviz_nbclust(df, kmeans, method = "silhouette")+ ggtitle("") + 
+  labs(subtitle = "Silhouette method for kmeans")
+
+set.seed(123)
+pk3 <- fviz_nbclust(df, kmeans,  method = "gap_stat", nboot = 200, verbose = FALSE)+ ggtitle("") + 
+  labs(subtitle = "Gap statistic method for kmeans")
+
+ph1 <- fviz_nbclust(df, hcut, method = "wss", hc_func = "hclust") +
+    geom_vline(xintercept = 4, linetype = 2)+ ggtitle("") + 
+  labs(subtitle = "Elbow method for hclust")
+
+ph2 <- fviz_nbclust(df, hcut, method = "silhouette", hc_func = "hclust")+ ggtitle("") + 
+  labs(subtitle = "Silhouette method for hclust")
+
+set.seed(123)
+ph3 <- fviz_nbclust(df, hcut,  method = "gap_stat", nboot = 200, verbose = FALSE, hc_func = "hclust")+ ggtitle("") + 
+  labs(subtitle = "Gap statistic method for hclust")
+
+grid.arrange(pk1,ph1, pk2,ph2, pk3,ph3, nrow = 3)
+```
+
+# Podsumowanie
+
+Ogólnie zagregowane miary dały nam pewien werdykt. `hclust` poradził sobie lepiej od `kmeans` w tym zadaniu. Cztery klastry są tak samo dobrym wyborem co docelowe siedem. Ciekawym jest to, że miary czasami się wykluczały. Dla ustalonych liczności klastrów można otrzymać sprzeczne wyniki, porównując między sobą dwie statystyki pogrupowania. Wreszcie wszystko zależy od tego, na czym nam najbardziej zależy. Wtedy możemy skupić się na maksymalizowaniu lub minimalizowaniu danej statystki.

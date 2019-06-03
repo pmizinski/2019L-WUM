@@ -22,8 +22,26 @@ plot(zbior[,1],zbior[,2],col=etykiety$V1)
 
 adjustedRand(srednie$cluster,etykiety$V1,c("Rand", "HA", "FM", "Jaccard"))
 
-clusplot(zbior, srednie$cluster, color=TRUE, shade=TRUE, lines=0)
+clusplot(zbior, srednie$cluster, color=TRUE, shade=TRUE, lines=0,main ="",xlab = "",ylab = "",sub = "" )
 
 clusplot(zbior, groups, color=TRUE, shade=TRUE, lines=0)
 
 adjustedRand(groups,etykiety$V1,c("Rand", "HA", "FM", "Jaccard"))
+
+ksrednie<-lapply(2:5,function(x){srednia<-kmeans(zbior,x,nstart = 25);srednia$cluster})
+statystyki<-sapply(ksrednie, function(x){adjustedRand(x,etykiety$V1,c("Rand", "HA", "FM", "Jaccard"))})
+data.frame(t(statystyki))
+
+
+ward <- hclust(d, method="ward.D2")
+ward<-lapply(2:5,function(x){srednia<-cutree(ward, k=x)})
+statystyki<-sapply(ward, function(x){adjustedRand(x,etykiety$V1,c("Rand", "HA", "FM", "Jaccard"))})
+ward<-data.frame(t(statystyki))
+
+clues::get_Silhouette(zbior,ward[[1]])
+
+library(reshape2)
+reshape2::melt(ward_stat)
+
+ggplot(data = stat,aes(x=liczba_klastrow,y=value,color=metoda,group=metoda))+geom_line()+facet_grid(. ~ variable)
+

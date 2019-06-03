@@ -1,0 +1,94 @@
+---
+title: "PD6"
+author: "Wojciech Bogucki"
+date: "20 maja 2019"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(ggplot2)
+source("funkcje.R")
+data(iris)
+levels(iris$Species) <- c(1,2,3)
+iris_lab <- as.integer(iris$Species)
+iris <- iris[-5]
+```
+# Wstęp
+Praca domowa przedstawia różne statystyki opisujące jakość pogrupowania danych. Z artykułu [On Clustering Validation Techniques](https://www.researchgate.net/publication/2500099_On_Clustering_Validation_Techniques) wybrałem do zaprezentaowania 4 statystyki:
+
+* Zewnętrzne:
+    - Indeks Randa
+    - Współczynnik Jaccarda
+    - Ustandaryzowana statystyka gamma Huberta
+  
+* Wewnętrzne:
+    - Indeks Dunna
+
+
+# Klasteryzacja
+Do klasteryzacji użyłem `kmeans()` oraz `hclust()` z metodą `complete`. Klasteryzację wykonałem na zbiorze danych `iris` dostępnym w R.
+W obydwu przypadkach sprwdziłem wyniki dla liczby klastów od 2 do 6.
+
+```{r klasteryzacja}
+clust1 <- lapply(2:6, function(k) kmeans(x = iris, centers = k, nstart = 20))
+
+res <- hclust(dist(iris), method = "complete")
+
+clust2 <- lapply(2:6, function(k) cutree(res, k=k))
+```
+
+# Statystyki
+Funkcje liczące wybrane statystyki napisałem w R zgodnie ze wzorami z artykułu, jak również sprawdziłem ich działanie porównując wyniki z wynikami funkcji z pakietów `clusterCrit` i `fossil`.
+```{r stat, echo=FALSE}
+
+rand1 <- sapply(1:5, function(i) rand_stat(iris_lab,clust2[[i]]))
+
+rand2 <- sapply(1:5, function(i) rand_stat(iris_lab,clust1[[i]]$cluster))
+
+jacc1 <- sapply(1:5, function(i) jaccard_coef(iris_lab,clust2[[i]]))
+
+jacc2 <- sapply(1:5, function(i) jaccard_coef(iris_lab,clust1[[i]]$cluster))
+
+hub_std1 <- sapply(1:5, function(i) hubert_std(iris_lab,clust2[[i]]))
+
+hub_std2 <- sapply(1:5, function(i) hubert_std(iris_lab,clust1[[i]]$cluster))
+
+dunn1 <- sapply(1:5, function(i) dunn_index(iris,clust2[[i]]))
+
+dunn2 <- sapply(1:5, function(i) dunn_index(iris,clust1[[i]]$cluster))
+
+ggplot(data.frame(x=rep(2:6, 4),y=c(rand1,jacc1,hub_std1, dunn1),col=rep(c("rand","jacc","hubert","dunn"),each=5)),aes(x=x,y=y, col=col)) + 
+  geom_line() +
+  xlab("Liczba klastrów")+
+  labs(title = "Współczynniki jakości klasteryzacji dla różnej liczby klastrów \ndla klasteryzacji hierarchicznej")
+
+ggplot(data.frame(x=rep(2:6, 4),y=c(rand2,jacc2,hub_std2, dunn2),col=rep(c("rand","jacc","hubert","dunn"),each=5)),aes(x=x,y=y, col=col)) + 
+  geom_line() +
+  xlab("Liczba klastrów")+
+  labs(title = "Współczynniki jakości klasteryzacji dla różnej liczby klastrów \ndla klasteryzacji metodą k-średnich")
+
+
+
+knitr::kable(as.data.frame(rbind("Indeks Randa"=round(rand1,2),"Współczynnik Jaccarda"=round(jacc1,2),"Ustandaryzowana statystyka gamma Huberta"=round(hub_std1,2), "Indeks Dunna"=round(dunn1,2))), col.names = 2:6, caption = "Współczynniki jakości klasteryzacji dla różnej liczby klastrów dla klasteryzacji hierarchicznej")
+
+knitr::kable(as.data.frame(rbind("Indeks Randa"=round(rand1,2),"Współczynnik Jaccarda"=round(jacc2,2),"Ustandaryzowana statystyka gamma Huberta"=round(hub_std2,2), "Indeks Dunna"=round(dunn2,2))), col.names = 2:6, caption = "Współczynniki jakości klasteryzacji dla różnej liczby klastrów dla klasteryzacji metodą k-średnich")
+```
+
+# Wnioski
+Kryteria zewnętrzne porównujące podział otrzymany podczas klasteryzacji z oryginalnym podziałem słusznie wskazuję 3 jako najlepszą liczbę klastrów. Wysokie wyniki otrzymałem również dla podziału na 4 klastry. Natomiast wewnętrzne kryterium, indeks Dunna, wskazał 4 jako optymalną liczbę klastrów dla obu metod klasteryzacji. Na wykresach analizy PCA można zauważyć, że podział na 4 klastry jest jak najbardziej uzasadniony.
+
+```{r pca, echo=FALSE}
+iris_pca <- prcomp(iris, center = TRUE, scale = TRUE)
+
+ggbiplot::ggbiplot(iris_pca, groups = factor(iris_lab), choices = c(1,2), obs.scale = 1) + labs(title="Oryginalny podział")
+
+ggbiplot::ggbiplot(iris_pca, groups = factor(clust2[[2]]), choices = c(1,2), obs.scale = 1) + labs(title="hierarchiczny klastering dla 3 klastrów")
+ggbiplot::ggbiplot(iris_pca, groups = factor(clust1[[2]]$cluster), choices = c(1,2), obs.scale = 1) + labs(title="k-średnich dla 3 klastrów")
+ggbiplot::ggbiplot(iris_pca, groups = factor(clust2[[3]]), choices = c(1,2), obs.scale = 1) + labs(title="hierarchiczny klastering dla 4 klastrów")
+ggbiplot::ggbiplot(iris_pca, groups = factor(clust1[[3]]$cluster), choices = c(1,2), obs.scale = 1) + labs(title="k-średnich dla 4 klastrów")
+
+
+```
+
+
