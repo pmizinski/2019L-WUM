@@ -1,0 +1,179 @@
+---
+title: "Lasy losowe"
+author: "Łukasz Brzozowski"
+date: "27.05.2019"
+output:
+  html_document:
+    df_print: paged
+    toc: true
+    toc_float: true
+    code_folding: hide
+    number_sections: true
+    theme: spacelab
+---
+
+```{r setup, include=FALSE}
+set.seed(1)
+knitr::opts_chunk$set(echo = TRUE, cache = TRUE)
+library(dplyr)
+library(mlr)
+library(ggplot2)
+library(DALEX)
+library(rpart.plot)
+library(rpart)
+library(ROCR)
+```
+
+
+#Prezentacja danych
+
+```{r}
+dat <- titanic
+dat$age <- as.integer(dat$age)
+dat$survived <- as.factor(dat$survived)
+dat$class <- as.factor(dat$class)
+summarizeColumns(dat)
+TestInx <- sample(nrow(dat), size = 0.3*nrow(dat))
+datTrain <- dat[-TestInx,]
+datTest <- dat[TestInx,]
+datTrain <- na.omit(datTrain)
+datTest <- na.omit(datTest)
+dat <- na.omit(dat)
+```
+
+Przedstawione dane dotyczą przeżywalności osób obecnych na statku podczas katastrofy Tytanika. W ramce obecnych jest pięć zmiennych kategorycznych, w tym zmienna celu `survived` oraz cztery zmienne numeryczne. W niewielkim procencie w ramce występują braki danych, które można bezstratnie usunąć. Do klasyfikacji użyjemy modelu `rpart`.
+
+
+# Modele
+
+## Parametry z artykułu
+
+Na początku zbudujemy model lasu losowego z hiperparametrami podanymi w artykule. Model oprzemy na implementacji `rpart`. Parametry to:
+
+* `minsplit` = 24 - najmniejsza liczba obserwacji potrzebna do wykonania operacji `split`,
+* `minbucket` = 12 - najmniejsza liczba obserwacji w każdym liściu drzewa,
+* `cp` = 0 - współczynnik zaawansowania modelu,
+* `maxdepth` = 21 - największa głębokość drzewa.
+
+```{r, warning = FALSE, cache = TRUE}
+set.seed(1)
+pars <- rpart.control(minsplit = 24, minbucket = 12, cp = 0, maxdepth = 21)
+
+model1 <- rpart(survived ~. , method = "class", data = datTrain, control = pars)
+
+res1 <- predict(model1, newdata = datTest, type = "prob")
+pred1 <- prediction( res1[, 2], datTest$survived)
+perf1 <- performance(pred1, "tpr", "fpr")
+perf1_1 <- performance(pred1, "auc")
+plot(perf1)
+abline(0, 1, lty = 2)
+slot(perf1_1, "y.values")
+
+```
+Jak widzimy, przy pomocy hiperparametrów z artykułu otrzymujemy AUC w wysokości prawie 82%.
+
+## Domyślne parametry
+
+Zbudujemy teraz model z domyślnymi parametrami implementacji pakietu `rpart`.
+
+```{r, warning = FALSE}
+set.seed(1)
+model2 <- rpart(survived ~. , method = "class", data = datTrain)
+res2 <- predict(model2, newdata = datTest, type = "prob")
+pred2 <- prediction( res2[, 2], datTest$survived)
+perf2 <- performance(pred2, "tpr", "fpr")
+perf2_1 <- performance(pred2, "auc")
+plot(perf2)
+abline(0, 1, lty = 2)
+slot(perf2_1, "y.values")
+```
+
+Otrzymany model ma bardzo podobne wyniki do uzyskanego z parametrami z artykułu, jednak skuteczność jest o ponad jeden punkt procentowy gorsza.
+
+## Random search
+
+Ostatecznie przygotujemy model przy pomocy przeszukiwania losowego przestrzeni hiperparametrów. Będziemy przeszukiwać parametry podane w artykule, ponieważ to umożliwi nam łatwe porównanie wyników.
+
+```{r, eval = TRUE, warning = FALSE, message = FALSE}
+set.seed(1)
+classifTask3 <- makeClassifTask(id = "rpart1", data = datTrain, target = "survived")
+classifLrn3 <- makeLearner("classif.rpart", predict.type = "prob")
+
+cv <- makeResampleDesc("CV", iters = 5L)
+ctrlRandom <- makeTuneControlRandom(maxit = 1000L)
+
+rfPms <- makeParamSet(
+  makeNumericParam("cp", lower = 0, upper = 0.2),
+  makeIntegerParam("maxdepth", lower = 2, upper = 50),
+  makeIntegerParam("minbucket", lower = 2, upper = 50),
+  makeIntegerParam("minsplit", lower = 2, upper = 50)
+  )
+
+rpartRes <- tuneParams(classifLrn3, task = classifTask3, measures = list(acc, auc), resampling = cv, par.set = rfPms, control = ctrlRandom)
+
+model3 <-  rpart(survived ~. , method = "class", data = datTrain, control = rpartRes$x)
+
+res3 <- predict(model3, newdata = datTest, type = "prob")
+pred3 <- prediction( res3[, 2], datTest$survived)
+perf3 <- performance(pred3, "tpr", "fpr")
+perf3_1 <- performance(pred3, "auc")
+plot(perf3)
+abline(0, 1, lty = 2)
+slot(perf3_1, "y.values")
+```
+
+Jak widzimy, po przeszukaniu przestrzeni parametrów osiągnęliśmy gorsze wyniki niż uzyskane z parametrami z artykułu oraz domyślnymi. Ostatecznie z trzech zbudowanych modeli najlepszy okazał się ten uzyskany przy domyślnych parametrach.
+
+## Najlepsze drzewo
+
+Możemy sprawdzić, jak wygląda najlepsze drzewo
+```{r, fig.width = 10, fig.height= 10, fig.align="center"}
+rpart.plot(model1, type = 1)
+```
+
+Na wykresie widzimy, że dla drzewa szczególnie ważnym czynnikiem jest płeć, ponieważ kobiety częściej uchodziły z życiem z tonącego statku. Następnie, co zaskakujące, największą szansę na przeżycie miały osoby podróżujące trzecią klasą.
+
+## Porównanie kryteriów podziału
+
+Teraz porównajmy wyniki drzew dzielących etykiety według różnych kryteriów podziału. Implementacja `classif.rpart` udostępnia dwie możliwe zasady dzielenia - `gini` oraz `information`.
+
+### `information`
+
+```{r, eval = TRUE}
+model4 <- rpart(survived ~. , method = "class", data = datTrain, parms = list(split = "information"))
+res4 <- predict(model4, newdata = datTest, type = "prob")
+pred4 <- prediction( res4[, 2], datTest$survived)
+perf4 <- performance(pred4, "tpr", "fpr")
+perf4_1 <- performance(pred4, "auc")
+plot(perf4)
+abline(0, 1, lty = 2)
+slot(perf4_1, "y.values")
+```
+
+### `gini`
+```{r, eval = TRUE}
+model5 <- rpart(survived ~. , method = "class", data = datTrain, parms = list(split = "gini"))
+res5 <- predict(model5, newdata = datTest, type = "prob")
+pred5 <- prediction( res5[, 2], datTest$survived)
+perf5 <- performance(pred5, "tpr", "fpr")
+perf5_1 <- performance(pred5, "auc")
+plot(perf5)
+abline(0, 1, lty = 2)
+slot(perf5_1, "y.values")
+```
+
+
+Jak widzimy, wyniki osiągnięte przy pomocy metody dzielącej `gini` są nieznacznie lepsze od metody `information gain`, osiągając ponad 79% AUC.
+
+# Porównanie z `ctree`
+
+Na koniec porównajmy osiągnięty model z modelem `ctree` na domyślnych parametrach.
+
+```{r, eval = TRUE, message = FALSE, warning = FALSE}
+classifTask7 <- makeClassifTask(id = "rf2", data = datTrain, target = "survived")
+classifLrn7 <- makeLearner("classif.ctree", predict.type = "prob")
+r <- resample(classifLrn7, classifTask7, cv5, measures = list(acc, auc))
+r$aggr
+```
+
+Warunkowa implementacja zadziałała gorzej, niż wygenerowane wcześniej drzewa. Jest to jednak wynik kroswalidacyjny, ponieważ zbiór testowy zawierał osoby z krajów, które nie pojawiały się w zbiorze treningowym, na co implementacja `ctree` nie jest odporna. Zatem faktyczna skuteczność algorytmu prawdopodobnie jest jeszcze niższa. Ostatecznie zatem najlepszy wynik uzyskaliśmy modelem zbudowanym na parametrach podanych w artykule. 
