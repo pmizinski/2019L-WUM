@@ -1,0 +1,91 @@
+---
+title: "PD6"
+author: "Karol Pysiak"
+date: "`r format(Sys.time(), '%d - %m - %Y')`"
+output:
+  html_document:
+    theme: simplex
+    df_print: paged
+    toc: true
+    toc_float: true
+    code_folding: hide
+    number_sections: true
+editor_options: 
+  chunk_output_type: console
+---
+
+
+# Wstęp
+
+W tej pracy domowej porównamy działanie 4 metod oceny jakości klasteryzacji. Wykorzystamy tutaj wskaźniki: `pearsongamma`, `dunn`, `dunn2`, `sindex`. Wszystkie pochodzą z funkcji `cluster.stats` z biblioteki `fpc`. Jako bazę do testów wykorzystamy dwa modele klasteryzacji `hclust` i `kmeans`. Próby przeprowadzimy dla $2, 3, ..., 11$ klastrów. Jako zbiór do testów użyjemy popularnego datasetu `iris`. Wiemy, że są w nim 3 odmiany kwiatów, więc będzie to można łatwo porównać z optymalną liczbą klastrów.
+
+## Użyte indeksy
+
+* `pearsongamma` jest to po prostu normalized gamma
+* `dunn` jest to podstawowy indeks Dunna
+* `dunn2` jest to wskaźnik z rodziny indeksów Dunna, jednakże różni się od powyższego i daje różne wyniki
+* `sindex` jest to wskaźnik separacji między klastrami
+
+
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE,
+                      fig.width = 10,
+                      fig.height = 7,
+                      fig.align = "center",
+                      cache = TRUE)
+library(ggplot2)
+library(kableExtra)
+library(fpc)
+library(reshape2)
+
+dane <- iris[,-5]
+k <- 2:11
+
+```
+
+# Testy
+
+## Hclust
+
+```{r hclust_calculate}
+hclust_clust <- lapply(k, function(x) { cutree(hclust(dist(dane), method = 'ward.D2'), x) })
+hclust_stat <- cbind(data.frame(matrix(unlist(lapply(hclust_clust, function(x) cluster.stats(dist(dane), unlist(x)) [c('pearsongamma', 'dunn', 'dunn2', 'sindex')])), ncol=4, byrow = TRUE)), k)
+colnames(hclust_stat) <- c('pearsongamma', 'dunn', 'dunn2', 'sindex', 'k')
+hclust_melted <- melt(hclust_stat, id.vars = 'k')
+
+```
+
+Do budowy drzewa w `Hclust` wykorzystamy metodę `ward.D2`.
+
+```{r}
+ggplot(hclust_melted, aes(x = k, y=value)) +
+  facet_wrap(~variable, scales = 'free_y') +
+  geom_line(stat='identity', aes(colour=variable)) +
+  ggtitle('hclust')
+```
+
+
+W przypadku klastrowania za pomocą `hclust` wszystkie indeksy osiągnęły swoje maksimum przy $2$ klastrach. `dunn` i `sindex` załamały się przy $3$ klastrach. `pearsongamma` oraz `dunn2` są zdecydowanie mniej wyraźne, ich wykresy są dużo delikatniej zakreślone. 
+
+## Kmeans
+
+```{r kmeans_calculate}
+kmeans_clust <- lapply(k, function(x) {kmeans(dist(dane), x)$cluster })
+kmeans_stat <- cbind(data.frame(matrix(unlist(lapply(kmeans_clust, function(x) cluster.stats(dist(dane), unlist(x)) [c('pearsongamma', 'dunn', 'dunn2', 'sindex')])), ncol=4, byrow = TRUE)), k)
+colnames(kmeans_stat) <- c('pearsongamma', 'dunn', 'dunn2', 'sindex', 'k')
+kmeans_melted <- melt(kmeans_stat, id.vars = 'k')
+```
+
+```{r}
+ggplot(kmeans_melted, aes(x = k, y=value)) +
+  facet_wrap(~variable, scales = 'free_y') +
+  geom_line(stat='identity', aes(colour=variable)) +
+  ggtitle('kmeans')
+```
+
+Klasteryzacja `kmeans` przyniosła zdecydowanie ciekawszy obraz indeksów. Jedynie 'pearsongamma` jest podobny do klasteryzacji `hclustem`. `dunn` jest bardzo niemonotiniczny, jako jedyny swoje maksimum osiąga przy $3$ klastrach.
+
+# Podsumowanie
+
+Indeksy mogą nam pomóc w dobraniu odpowiedniego modelu czy liczby klastrów, jednakże na przykładzie użytych tutaj w większości przypadków ciężko się dopatrzeć, że $3$ klastry jest optymalną liczbą, co wynika z charakterystyki data setu. Indeksy się także bardzo różnią między sobą, dwa różne indeksy mogą dawać skrajnie różne wyniki, więc bazując nasze decyzje na nich warto porównać różne wskaźniki, ponieważ niosą one ze sobą różne informacje. 
