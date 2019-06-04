@@ -1,0 +1,104 @@
+---
+title: "Praca domowa 7"
+author: "Michał Stawikowski"
+date: "`r format(Sys.time(), '%d - %m - %Y')`"
+output:
+  html_document:
+    df_print: paged
+    toc: true
+    toc_float: true
+    code_folding: hide
+    number_sections: true
+---
+
+```{r setup, echo = F,warning=FALSE, message=FALSE, comment=FALSE, prompt=FALSE}
+
+knitr::opts_chunk$set(warning=FALSE, message=FALSE, comment=FALSE, prompt=FALSE)
+library(clValid)
+library(ggplot2)
+library(dplyr)
+library(ClusterR)
+library(NbClust)
+library(factoextra)
+library(fpc)
+library(cluster)
+library(mclust)
+library(knitr)
+library(kableExtra)
+heart <- read.csv('heart.csv')
+data <- select(heart, - target)
+data <- na.omit(data)
+data <- center_scale(data, mean_center = T, sd_scale = T)
+```
+
+#Wprowadzenie
+
+W tej pracy domowej porównam wyniki działania algorytmów `k-średnich` - `kmeans` i `k-medoidów` - `pam`. Sprawdzimy czy optymalne liczby klastrów dla dwóch metod będą takie same, a także zwizualizuję podział na grupy.  Grupowanie obserwacji przeprowadzać będę na zbiorze `Heart Disease UCI`, który zawiera dane na temat chorób serca u pacjentów.
+
+#Liczba klastrów
+
+```{r echo = F,warning=FALSE, message=FALSE, comment=FALSE, prompt=FALSE}
+intern <- clValid(data, nClust = 2:9, clMethods=c("kmeans","pam"), validation = 'internal', verbose = FALSE)
+```
+
+```{r}
+
+op <- par(no.readonly=TRUE)
+par(mfrow=c(2,2),mar=c(4,4,3,1))
+plot(intern, legend=FALSE)
+plot(nClusters(intern),measures(intern,"Dunn")[,,1],type="n",axes=F,xlab="",ylab="")
+legend("center", clusterMethods(intern), col=1:9, lty=1:9, pch=paste(1:9))
+```
+
+
+Dla obu algorytmóW optymalną liczbą klastrów biorać pod uwagę wyżej wymienione statystyki okazało 2. Dla `kmeans` statystyki `Connectivity` oraz `Dunn` wybrały 2, zaś w przypadku `pam` były to `Silhouette` (co nie jest niczym dziwnym, gdyż na tym opiera się ten algorytm) oraz ponownie `Connectivity`. Sumarycznie algorytm `k-średnich` otrzymał lepsze wyniki dla dwóch statystyk a `k-medoidóW` dla jednej.
+
+
+#Porównanie i centra klastrów
+
+##Kmeans
+
+```{r}
+hc <- data %>% eclust("kmeans", k = 2, graph = FALSE)
+
+fviz_cluster(hc, data = Data,
+             
+            show.clust.cent=TRUE,stand=T, geom='point', pointsize = 2,ellipse.type='confidence')
+```
+
+Biorąc pod uwagę dwie najbardziej znaczące ze względu na PCA zmienne algorytm `kmeans` wydzielił dobrze odzielone klastry.
+
+##PAM
+
+```{r}
+hc <- data %>% eclust("pam", k = 2, graph = FALSE)
+
+
+fviz_cluster(hc, data = Data,
+             
+            show.clust.cent=TRUE,stand=T, geom='point', pointsize = 2,ellipse.type='confidence')
+```
+
+W przypakdu algorytmu `pam` klastry trochę na siebie nachodzą.
+
+Centra nie znajdują się w dokładnie tym samym miejscu, jednak ciężko to stwierdzić na pierwszy rzut oka.
+
+
+# Szybkość zbieżności algorytmów
+
+Do porównania szybkości zbieżności algorytmów wykorkrzystamy pakiet `rbenchmarks` dla 100 wywyołań.
+
+```{r}
+library(rbenchmark)
+
+kable_styling(kable(benchmark("kmeans" = {
+           hc <- data %>% eclust("kmeans", k = 2, graph = FALSE)
+          },'pam'= {
+          hc <- data %>% eclust("pam", k = 2, graph = FALSE)
+          },
+          replications = 100,
+          columns = c("test", "replications", "elapsed",
+                      "relative", "user.self", "sys.self"))))
+
+```
+Znacząco szybsza okazała się implementacja `kmeans`.

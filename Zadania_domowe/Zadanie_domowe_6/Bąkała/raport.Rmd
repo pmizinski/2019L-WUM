@@ -1,0 +1,141 @@
+---
+title: "Analiza kryteriów klasteryzacji"
+author: "Mateusz Bąkała"
+date: "26 maja 2019"
+output:
+  html_document:
+    code_folding: hide
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+require(clusterCrit)
+require(clValid)
+require(clv)
+require(dendextend)
+require(dplyr)
+require(fpc)
+require(rlist)
+```
+
+## Wstęp
+
+W poniższej pracy wykonana zostanie analiza kryteriów oceny jakości klasteryzacji. Używanym zbiorem danych będzie zbiór seeds opisujący ziarna trzech różnych odmian zboża (Kama, Rosa i kanadyjska), w strukturze bardzo podobny do powszechnie znanego zbioru iris. Ma jednak więcej obserwacji - 210 - i więcej kolumn opisujących obserwacje - 7.
+
+```{r, include=FALSE}
+data <- read.csv("seeds_dataset.csv") %>% select(-ID)
+data_X <- data %>% select(-seedType)
+data_y <- data$seedType
+```
+
+```{r, echo=FALSE}
+knitr::kable(table(data_y),
+             col.names = c("Numer klasy", "Liczność"),
+             caption = "Liczności oryginalnych klas")
+```
+
+Do bycia mierzonymi wybrane zostały dwa najpopularniejsze algorytmy - kmeans i hclust - z uwagi na ich względną prostotę, a co za tym idzie, stabilność w wynikach.
+
+## Produkcja rezultatów
+
+W celu usprawnienia procesu oceniania algorytmów klastrujących przygotowana została funkcja `compute_validity_indices`, która przyjmuje jako argumenty wektor numeryczny dopasowanych klastrów oraz (w przypadku algorytmów hierarchicznych) drzewo. Następnie oblicza następujące współczynniki:
+
+* external criteria:
+    - współczynnik Randa
+    - współczynnik Jaccarda
+    - współczynnik Fowlkesa-Mallowsa
+    - współczynnik Russela-Rao
+    - gammę Huberta
+    - gammę znormalizowaną
+* internal criteria:
+    - gammę
+    - kopenetyczny współczynnik korelacji (CPCC, mający sens wyłącznie dla struktur drzewiastych)
+    - współczynnik Daviesa-Bouldin
+    - współczynnik Dunna
+    - współczynnik Xie-Beni
+
+i zwraca listę wyników podzielonych na powyższe dwie kategorie. Dla wygody prezentacji wyników rezultat ten będziemy konwertować do kolumny w ramce danych.
+
+Poniżej zamieszczony został kod funkcji, dla zainteresowanych szczegółami implementacji.
+
+```{r}
+compute_validity_indices <- function(cluster, tree = NULL) {
+  stats <- cluster.stats(dist(data_X), cluster, data_y)
+  std <- std.ext(data_y, cluster)
+  int_crit <- intCriteria(as.matrix(data_X), cluster, c("Gamma", "Xie_Beni", "Davies_Bouldin", "Dunn"))
+  # external: Rand; Jaccard; Fowlkes and Mallows; Russel and Rao *
+  ext <- list(Rand = clv.Rand(std),
+              Jaccard = clv.Jaccard(std),
+              Fowlkes.Mallows = clv.Folkes.Mallows(std),
+              Russel.Rao = clv.Russel.Rao(std),
+              Huberts.Gamma = extCriteria(data_y, cluster, "Hubert")$hubert,
+              Normalized.Gamma = stats$pearsongamma)
+  
+  # internal: Gamma, cophenetic correlation, Davies-Bouldin, Dunn, Xie-Beni
+  CPCC <- ifelse(!is.null(tree), cor(dist(data_X), cophenetic(h)), NA)
+  int <- list(Gamma = int_crit$gamma,
+              CPCC = CPCC,
+              Davies.Bouldin = int_crit$davies_bouldin,
+              Dunn = int_crit$dunn,
+              Xie.Beni = int_crit$xie_beni)
+  
+  # result
+  list(External = ext,
+       Internal = int)
+}
+```
+
+Skoro zaprojektowana została powyższa funkcja, możemy przejść do produkcji rezultatów. Jako że wiemy, że prawidłową liczbą klastrów jest 3, to wymienione wcześniej algorytmy przetestujemy dla wartości 2, 3, 4 i 5 klastrów jako argumentu funkcji. Będziemy oczekiwać, że wartość 3 powinna zwracać najlepsze rezultaty niezależnie od algorytmu.
+
+W przypadku algorytmu hclust musimy wpierw zasadzić drzewo, by móc je ścinać.
+
+```{r}
+h <- data_X %>%
+  dist() %>%
+  hclust()
+```
+
+Teraz nic nie stoi nam na przeszkodzie, by przejść do clou programu.
+
+```{r, include=FALSE}
+results <- cbind(kmeans2 = unlist(compute_validity_indices(kmeans(data_X, 2)$cluster)),
+                 kmeans3 = unlist(compute_validity_indices(kmeans(data_X, 3)$cluster)),
+                 kmeans4 = unlist(compute_validity_indices(kmeans(data_X, 4)$cluster)),
+                 kmeans5 = unlist(compute_validity_indices(kmeans(data_X, 5)$cluster)),
+                 hclust2 = unlist(compute_validity_indices(cutree(h, k = 2), dendlist(as.dendrogram(h)))),
+                 hclust3 = unlist(compute_validity_indices(cutree(h, k = 3), dendlist(as.dendrogram(h)))),
+                 hclust4 = unlist(compute_validity_indices(cutree(h, k = 4), dendlist(as.dendrogram(h)))),
+                 hclust5 = unlist(compute_validity_indices(cutree(h, k = 5), dendlist(as.dendrogram(h)))))
+```
+
+```{r, echo=FALSE}
+knitr::kable(results, caption = "Wyniki algorytmów z różnymi parametrami")
+```
+
+## Analiza wyników
+
+Przejdźmy po kolei po uzyskanych wynikach.
+
+Indeks Randa wyraża częstotliwość zdarzenia, w którym klasteryzacja nadała danej parze obserwacji te same bądź różne etykiety tak samo jak klasteryzacja odniesienia, i przyjmuje wartości z przedziału [0, 1], gdzie 1 to idealna klasteryzacja. Łatwo zauważyć, że dwa klastry to zdecydowanie zbyt mało, a kmeans dla 3 klastrów był nieporównywalnie lepszy od reszty.
+
+Indeks Jaccarda oblicza podobieństwo między zbiorami i również zwraca wartości z przedziału [0, 1] z maksimum w 1. Znając metodę, dość oczywistym staje się, że wyniki dla 3 klastrów muszą być lepsze od pozostałych - i tak jest w istocie.
+
+Indeks Fowlkesa-Mallowsa (często zwanym mylnie indeksem Folkesa-Mallowsa) również oblicza podobieństwo między zbiorami wyrażane w przedziale [0, 1] z maksimum w 1. I podobnie jak w poprzednim przypadku, wyniki dla 3 klastrów dominują szczyt tabeli.
+
+Indeks Russela-Rao oblicza prawdopodbieństwo (naturalnie w skali [0, 1]), że dana para obserwacji będzie współdzieliła klaster zarówno w mierzonej klasteryzacji, jak i tej stanowiącej punkt odniesienia. Z tego powodu mniejsza wartość argumentu liczby klastrów dawała wyższe wyniki w tej miarze.
+
+Gamma Huberta daje wyniki w przedziale [-1, 1] i jest zestandaryzowaną wersją indeksu Russela-Rao. Tutaj już wyniki dla trzech klastrów powróciły na tron.
+
+Znormalizowana gamma wyraża w przedziale [0, 1] korelację pomiędzy wektorem odległości obserwacji od siebie oraz wektorem zer i jedynek, gdzie 0 oznacza ten sam klaster w obydwóch klasteryzacjach, natomiast 1 - różny. Tutaj, co ciekawe, wartości uzyskiwane dla dwóch klastrów są nieznacznie lepsze niż dla trzech.
+
+Gamma w internal criteria jest adaptacją gammy Huberta dla miar nie używających klastrów odniesienia. Tutaj wyniki dla 3, 4 i 5 klastrów są dosyć wyrównane, z pewnym wskazaniem na największą z tych wartości.
+
+CPCC przyjmuje jako argument wyłącznie drzewo, dlatego możemy jedynie spojrzeć, na ile wiernie uzyskane drzewo oddaje strukturę oryginalnych danych. Wynik na poziomie 0.743 jest względnie przeciętny, co znajduje swoje odbicie w jakości klasteryzacji hclust.
+
+Indeks Daviesa-Bouldin przyjmuje wartość minimalną w 0 i wyraża stosunek wewnętrznego rozrzutu klastrów do separacji pomiędzy klastrami. Przyjęcie dwóch klastrów daje tutaj najlepsze wyniki.
+
+Indeks Dunna liczy to, co poprzednik, przy czym celem jest tutaj *maksymalizacja* wyniku, algorytm zaś przyjmuje wartości maksymalne dla rozrzutu klastrów, co skutkuje zwracaniem "pesymistycznych" wartości. Optymalną wartością jest ponownie 2.
+
+Indeks Xie-Beni jest kolejną miarą, w której niższy wynik jest lepszy, co oznacza, że 3 klastry są najlepszym wyborem (koniecznie dla hclust). W temacie metodologii - współczynnik ten jest ilorazem błędu średniokwadratowego oraz minimum minimalnych kwadratów odległości pomiędzy punktami wewnątrz klastrów.
+
+Podsumowując, wyniki dla argumentu 3 klastrów nie zdominowały klasyfikacji w sposób przypominający dominację Mercedesa w aktualnym sezonie Formuły 1, jednak nie uzyskiwały najgorszych wyników w żadnej z klasyfikacji, co sugeruje, że może być to najlepsza miara. Ewentualnym rywalem może być 2, co wynika prawdopodobnie z faktu łączenia przez takie algorytmy dwóch bliższych sobie klastrów oryginalnych danych.

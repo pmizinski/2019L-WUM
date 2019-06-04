@@ -1,0 +1,132 @@
+---
+title: "PD6"
+author: "Adam Rydelek"
+date: "`r format(Sys.time(), '%d - %m - %Y')`"
+output:
+  html_document:
+    df_print: paged
+    toc: true
+    toc_float: true
+    code_folding: hide
+    number_sections: true
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(dplyr)
+library(ggplot2)
+library(mlr)
+library(caret)
+library(cluster)
+library(factoextra)
+library(magrittr)
+library(clValid)
+library(fpc)
+library(dendextend)
+x <- read.csv('Mall_Customers.csv')
+x <- x[,-1]
+y <- x[,-1]
+
+finalData <- y %>% scale()
+finalData <- cbind(x[,1], finalData)
+colnames(finalData) <- c('Gender', 'Age', 'Income', 'Score')
+Data <- data.frame(finalData)
+```
+
+# Wprowadzenie
+
+W ramach pracy domowej porównam różne statystyki walidacyjne klasteryzacji na trzech modelach: `kmeans`, `hclust` i `pam`. Do tego celu wykorzystam zbiór [Mall_Customers](https://www.kaggle.com/vjchoudhary7/customer-segmentation-tutorial-in-python) z kaggle.
+
+## Wybór badanej liczby klastrów
+
+Aby wybrać odpowiednią liczbę klastrów wykorzystamy pakiet `factoextra`, za pomocą którego wykonamy wykres porównujący statystykę **gap** dla różnej liczby klastrów.
+
+```{r}
+fviz_nbclust(Data, kmeans, method = "gap_stat")
+```
+
+Za pomocą powyższego wykresu uznałem, że przeprowadzimy dalsze testy na **2**, **6** i **8** klastrach.
+
+## Wizualizacja poszczególnych modeli
+
+Aby zobaczyć jak dobrze wybrane modele dzielą zbiór na klastry porównamy **PAM** i **kmeans** na 6 klastrach, które według powyższej statystyki są najbardziej optymalne.
+
+```{r}
+a1 <- eclust(Data, 'kmeans', k = 2, graph=FALSE)
+b1 <- eclust(Data, 'pam', k = 2, graph=FALSE)
+c1 <- eclust(Data, 'hclust', k=2, graph=FALSE)
+a6 <- eclust(Data, 'kmeans', k = 6)
+b6 <- eclust(Data, 'pam', k = 6)
+c6 <- eclust(Data, 'hclust', k=6)
+a8 <- eclust(Data, 'kmeans', k = 8, graph=FALSE)
+b8 <- eclust(Data, 'pam', k = 8, graph=FALSE)
+c8 <- eclust(Data, 'hclust', k=8, graph=FALSE)
+```
+
+Można zauważyć, że generalny kształt klastrów jest podobny między modelami, jednak widać spore różnice w ich kształcie, zobaczymy teraz jak wpłynie ta różnica na statystyki.
+
+# Statystyki jakości
+
+## Porównanie za pomocą clValid
+
+Najpierw zajmę się statystykami *internal*. Do początkowej oceny wykorzystam pakiet `clValid`. Porównuje on trzy statystyki: *Conectivity*, *Dunn Index*, oraz *Silhouette*.
+
+### Statystyki nieporównawcze
+
+```{r, warning=FALSE, error=FALSE,message=FALSE}
+intern <- clValid(Data, c(2,6,8), clMethods=c("hierarchical","kmeans","pam"),validation="internal")
+op <- par(no.readonly=TRUE)
+par(mfrow=c(2,2),mar=c(4,4,3,1))
+plot(intern, legend=FALSE)
+plot(nClusters(intern),measures(intern,"Dunn")[,,1],type="n",axes=F,xlab="",ylab="")
+legend("center", clusterMethods(intern), col=1:9, lty=1:9, pch=paste(1:9))
+```
+
+Jako, że wartość *Conectivity* minimalizujemy, a *Dunn* i *Silhouette* maksymalizujemy można zauważyć, że najlepsze okazały się:
+
+```{r}
+z <- data.frame(Score=c(16.4485, 0.1325, 0.3562), Method=c('hclust','hclust','kmeans'), Clusters=c(2,6,6))
+rownames(z) <- c('Connectivity','Dunn','Silhouette')
+knitr::kable(z)
+```
+
+## Statystyki z artykułu
+
+Teraz porównam statystyki nieporównawcze: *Dunn Index*, *Gamma Statistic*, *Entropy*, oraz statystykę porównawczą: indeks *Fowlkesa-Mallowsa*.
+
+### Statystyki nieporównawcze
+
+```{r}
+kmeans1 <- cluster.stats(dist(Data),  a1$cluster)
+kmeans2 <- cluster.stats(dist(Data),  a6$cluster)
+kmeans3 <- cluster.stats(dist(Data),  a8$cluster)
+pam1 <- cluster.stats(dist(Data),  b1$cluster)
+pam2 <- cluster.stats(dist(Data),  b6$cluster)
+pam3 <- cluster.stats(dist(Data),  b8$cluster)
+hclust1 <- cluster.stats(dist(Data), c1$cluster)
+hclust2 <- cluster.stats(dist(Data), c6$cluster)
+hclust3 <- cluster.stats(dist(Data), c8$cluster)
+
+knitr::kable(data.frame(clusters=c(2,6,8),kmeans=c(kmeans1$dunn, kmeans2$dunn, kmeans3$dunn), pam=c(pam1$dunn,pam2$dunn,pam3$dunn), hclust=c(hclust1$dunn,hclust2$dunn,hclust3$dunn)), caption='Dunn Index')
+
+knitr::kable(data.frame(clusters=c(2,6,8),kmeans=c(kmeans1$pearsongamma, kmeans2$pearsongamma, kmeans3$pearsongamma), pam=c(pam1$pearsongamma,pam2$pearsongamma,pam3$pearsongamma), hclust=c(hclust1$pearsongamma,hclust2$pearsongamma,hclust3$pearsongamma)), caption='Pearson Gamma')
+
+knitr::kable(data.frame(clusters=c(2,6,8),kmeans=c(kmeans1$entropy, kmeans2$entropy, kmeans3$entropy), pam=c(pam1$entropy,pam2$entropy,pam3$entropy), hclust=c(hclust1$entropy,hclust2$entropy,hclust3$entropy)), caption='Entropy')
+
+```
+
+Jako, że *Dunn Index* maksymalizujemy, to potwierdzamy ponownie, że najlepsze wyniki daje on dla klasteryzacji **hierarchicznej** i liczby klastrów równej 6. Statystykę Pearsona: *Gamma* również maksymalizujemy, więc najlepszy również okazał się hclust dla 6 klastrów. Biorąc pod uwagę *entropię*, która powinna być jak najmniejsza wszystkie modele dawały porównywalne wyniki dla danej liczby klastrów. Najlepsze wartości otrzymaliśmy dla 2 klastrów.
+
+### Statystki porównawcze
+
+Do obliczenia indeksu Fowlkesa-Mallowsa wykorzystam pakiet `dendextend` i jego funkcję `FM_index_R`. Jako, że w zbiorze nie ma poprawnie przypisanych etykiet, porównam nasze trzy modele przy założeniu 6 klastrów.
+
+```{r}
+l <- data.frame(kmeans=c(NA,FM_index_R(a6$cluster, b6$cluster)[1],FM_index_R(a6$cluster, c6$cluster)),pam=c(FM_index_R(b6$cluster, a6$cluster)[1], NA, FM_index_R(b6$cluster, c6$cluster)), hclust=c(FM_index_R(c6$cluster, a6$cluster)[1],FM_index_R(c6$cluster, b6$cluster),NA))
+rownames(l) <- c('kmeans','pam','hclust')
+knitr::kable(l)
+```
+
+# Podsumowanie
+
+Podsumowując różne statystyki dały różniące się wyniki, jednak generalnie rzecz biorąc najlepszy okazał się **hclust**, a najlepszą liczbą klastrów jest **6**. Dzięki indeksowi Fowlkesa-Mallowsa można zauważyć, że najbardziej zbliżone sposoby klastrowania na naszym zbiorze danych to **kmeans** i **pam**, natomiast klastrowanie hierarchiczne odbiega od nich znacząco.

@@ -1,0 +1,203 @@
+---
+title: "PD7"
+author: "Dominik Rafacz"
+date: "`r format(Sys.time(), '%d - %m - %Y')`"
+output:
+  html_document:
+    theme: simplex
+    df_print: paged
+    toc: true
+    toc_float: true
+    code_folding: hide
+    number_sections: true
+editor_options: 
+  chunk_output_type: console
+---
+
+#Wstęp
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE,
+                      fig.width = 10,
+                      fig.height = 7,
+                      fig.align = "center",
+                      cache = TRUE)
+library(ggplot2)
+library(ggvoronoi)
+library(cowplot)
+library(cluster)
+library(kableExtra)
+library(dplyr)
+library(stringi)
+library(reshape2)
+```
+
+W niniejszym raporcie będziemy porównywać metodę k--średnich oraz k--medoidów.
+
+# Dane
+
+Posłużymy się do tego celu syntetycznymi danymi do benchmarków -- zbiorze [a1](http://cs.joensuu.fi/sipu/datasets/).
+
+```{r data, include = FALSE}
+dataset <- cbind(read.csv2("a1.data", sep = " ", 
+                           col.names = c("x", "y"),
+                           header = FALSE), 
+                 read.csv2("a1.labels", 
+                           col.names = "label",
+                           header = FALSE))
+dataset$x <- scale(dataset$x)
+dataset$y <- scale(dataset$y)
+
+```
+
+Posiada on $3000$ obserwacji oraz $20$ klastrów. Rozkład przeskalowanych danych wraz z oryginalnymi etykietami prezentujemy na poniższym wykresie:
+
+```{r origplot}
+ggplot(data = dataset, aes(x = x, y = y, color = as.factor(label))) + 
+  geom_point()
+```
+
+# Klasteryzacja
+
+Teraz dokonamy klasteryzacji korzystając z funkcji `kmeans` (metoda k--średnich) z wbudowanego pakietu `stats` oraz z funkcji `pam` (metoda k--medoidów) z pakietu `cluster`. Liczbę klastrów (parametr *k*) będziemy wybierać spośród zbioru liczb naturalnych od $2$ do $30$.
+
+```{r cluster,echo=FALSE}
+set.seed(42)
+
+kmeans_clusters <- lapply(2:30, function(k) kmeans(dataset[, 1:2], k))
+pam_clusters <- lapply(2:30, function(k) pam(dataset[, 1:2], k))
+```
+
+## Przykładowe klastry
+
+Na poniższych wykresach zaprezentujemy przykładowe klasteryzacje:
+
+```{r sampleclusters, echo=FALSE, fig.height=20}
+plotlist <- c(
+  lapply(c(1, 4, 9, 19, 29), function(k) {
+    ggplot(data = dataset, aes(x = x, y = y, color = as.factor(kmeans_clusters[[k]]$cluster))) +
+      geom_point(show.legend = FALSE) +
+      ggtitle(paste0("kmeans, k = ", k+1))
+    }),
+  lapply(c(1, 4, 9, 19, 29), function(k) {
+    ggplot(data = dataset, aes(x = x, y = y, color = as.factor(pam_clusters[[k]]$cluster))) +
+      geom_point(show.legend = FALSE) +
+      ggtitle(paste0("pam, k = ", k+1))
+    })
+)
+plot_grid(plotlist = plotlist[c(1, 6, 2, 7, 3, 8, 4, 9, 5, 10)], ncol = 2)
+
+```
+
+# Porównanie klasteryzacji
+
+## Wybór optymalnego parametru *k*
+
+Spróbujemy teraz wybrać optymalną liczbę wykresów na podstawie błędu w klastrach:
+
+```{r errors, echo = FALSE}
+err_kmeans <- do.call(rbind, lapply(kmeans_clusters, function(clust) clust$tot.withinss))
+err_pam <- data.frame(k = 2:30, do.call(rbind, lapply(pam_clusters, function(clust) clust$objective)))
+err_pam %>% melt(id.vars = "k") -> err_pam_m
+
+ggplot() +
+  geom_line(aes(x = 2:30, y = err_kmeans)) +
+  scale_x_continuous(name = "k", breaks = 2:30) +
+  ggtitle("kemans mean squared error")
+
+ggplot(data = err_pam_m, aes(x = k, y = value, color = variable)) +
+  geom_line() +
+  scale_x_continuous(name = "k", breaks = 2:30) + 
+  ggtitle("pam objective value")
+
+```
+
+Jak widać, metoda k--średnich zwróciła dość nieregularne wyniki (pojawiają się skoki wartości błedu), podczas gdy metoda k--medoidów w tym przypadku daje jednostajny spadek wartości funkcji celu w zależności od wartości parametru *k*. 
+
+Dla pierwszego algorytmów wybór najlepszego *k* nie będzie jednoznaczny -- propozycjami (na podstawie wykresu, korzystając z tzw. *metody łokcia*) mogłyby być wartości $8, 10$ lub $20$. Dla drugiego algorytmu można zaproponować wartości $18$ lub $20$. Jako że $20$ w obu przypadkach pojawia się w proponowanych, a ponadto wiemy, że jest to faktyczna liczba klastrów, ja zdecydowałbym się ją wybrać jako ostateczną wartość w obu przypadkach.
+
+## Porównanie klastrów dla *k = 20*
+
+Spójrzmy teraz, jak wyglądają klastry dla wybranej liczby *k*
+
+```{r optclusts}
+ggplot(data = cbind(dataset[, 1:2], cluster = kmeans_clusters[[19]]$cluster), 
+       aes(x = x, y = y, group = cluster)) +
+  geom_point(alpha = 0.7) +
+  stat_voronoi(data = as.data.frame(kmeans_clusters[[19]]$centers), 
+               aes(x = x, y = y),
+               color = "red", size = 3, alpha = 0.9,
+               geom = "path", outline = data.frame(x = c(-2, -2, 2, 2),
+                                                   y = c(-2.5, 2, 2, -2.5),
+                                                   group = c(1,1,1,1))) +
+  stat_voronoi(data = as.data.frame(pam_clusters[[19]]$medoids), 
+               aes(x = x, y = y),
+               color = "blue", size = 3, alpha = 0.9,
+               geom = "path", outline = data.frame(x = c(-2, -2, 2, 2),
+                                                   y = c(-2.5, 2, 2, -2.5),
+                                                   group = c(1,1,1,1)))
+
+```
+
+Na wykresie, niebieskie wielokąty reprezentują granicę klastrów k--medoidów, natomiast czerwone -- k--średnich. Jak widzimy, klastry `pam` są bardziej zwarte niż klastry `kmeans` i reprezentują niemal idealny podział na grupki danych oryginalnych.
+
+## Porównanie centrów
+
+```{r centers}
+ggplot(data = (dataset[, 1:2]), aes(x = x, y = y)) +
+  geom_point(alpha = 0.7) +
+  geom_point(data = as.data.frame(kmeans_clusters[[19]]$centers), 
+               aes(x = x, y = y),
+             color = "red", size = 5) +
+  geom_point(data = as.data.frame(pam_clusters[[19]]$medoids), 
+               aes(x = x, y = y),
+             color = "blue", size = 5)
+
+```
+
+Na wykresie na niebiesko zaznaczone są k--medoidy, na czerwono k--średnie.
+
+Główną różnicą pomiędzy centrami klastrów wynika z faktu różnicy między działaniem algorytmu -- algorytm k--średnich wybiera pewną średnią między grupą punktów -- i średnia ta sama niekoniecznie musi być punktem ze zbioru danych, podczas gdy w przypadku algorytmu k--medoidów środek klastra musi należeć do zbioru danych. Stąd w przypadku pierwszego algorytmu mogą powstawać takie sytuacje jak na powyższych wykresach -- jeden z klastrów zawiera w sobie dwa dosyć wyraźnie odseparowane klastry.
+
+# Benchmark
+
+Na koniec porównamy tempo zbieżności obu algorytmów. Policzymy czas zbieżności dla *k* $= 10, \dots, 30$.
+
+```{r benchmark, echo = FALSE}
+inds_kmeans <- as.list(10:30)
+names(inds_kmeans) <- paste(10:30, "kmeans", sep = "_")
+inds_pam <- as.list(10:30)
+names(inds_pam) <- paste(10:30, "pam", sep = "_")
+
+benchmark <- do.call(rbenchmark::benchmark, 
+                     c(
+                       lapply(inds_kmeans, function(k) {
+                         tmp <- quote(kmeans(dataset[,1:2], k)); tmp[3] <- k; tmp}
+                       ),
+                       lapply(inds_pam, function(k) {
+                         tmp <- quote(pam(dataset[,1:2], k)); tmp[3] <- k; tmp}
+                       ),
+                       replications = 1
+                     )
+              )
+
+
+```
+
+
+
+```{r benchres}
+benchmark %>% 
+  mutate( k = as.numeric(stri_sub(test, 1, 2)), 
+          algorithm = stri_sub(test, 4)) %>% 
+  select(k, algorithm, elapsed) %>%
+  ggplot(aes(x = k, y = elapsed, color = algorithm)) +
+    geom_line() +
+    ggtitle("estimated convergency time (in seconds)") 
+```
+
+Jak widzimy, algorytm k--medoidów z powodu swojej kwadratowej złożoności obliczeniowej jest wielokrotnie wolniejszy od błyskawicznego algorytmu k--średnich.
+
+# Podsumowanie
+
+Algorytm k--medoidów będzie się sprawdzał lepiej niż algorytm k--średnich, gdy klastry są nie tak wyraźnie odseparowane, lecz każdy z nich ma rozkład w przybliżeniu normalny względem każdej ze zmiennych -- w takim przypadku, nawet jeśli klastry na siebie nachodzą, względnie łatwo będzie wydzielić ich medianę, podczas gdy ze średnią może być trudniej. Algorytm ten będzie raczej nieskuteczny przy małej liczbie danych -- wtedy również mediana będzie dla niego niewidoczna, jako że żadna z obserwacji może nie być blisko "prawdziwej" mediany rozkładu. Należy też pamiętać o jego znacznie dłuższym czasie obliczania.

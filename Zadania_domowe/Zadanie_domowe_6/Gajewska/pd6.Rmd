@@ -1,0 +1,173 @@
+---
+title: "praca domowa 6"
+author: "Joanna Gajewska"
+date: "4 June 2019"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+##Wstęp 
+W zadaniu będę wyliczas statystyi dla zbioru iris, oraz skorzystam z metod klastrowania : 
+
+* Metoda k-średnich
+
+* PAM 
+
+W pierwszej kolejności krótko opiszę powyższe metody 
+
+###Metoda k-średnich
+Celem tej metody jest podział zbioru danych na k klastrów. Dobry podział to taki,
+w którym suma odległości obserwacji należących do klastra jest znacznie mniejsza
+od sumy odległości obserwacji pomiędzy klastrami. Metoda k-średnich polega na
+wyznaczeniu współrzędnych k punktów, które zostaną uznane za środki klastrów.
+Obserwacja będzie należała do tego klastra, którego środek jest najbliżej niej.
+
+
+### Metoda grupowania wokół centroidów PAM
+Metoda PAM działa na podobnej zasadzie jak k-średnich, z tą różnicą, że środkami klastrów są obserwacje ze zbioru danych. W metodzie PAM zbiór możliwych środków klastrów jest więc znacznie
+mniejszy, niż w metodzie k-średnich.
+
+###Zbiór danych iris
+
+```{r,  echo=FALSE, message=FALSE, warning=FALSE}
+
+
+library(cluster)
+library(clusterCrit)
+attach(mtcars)
+library(mlr)
+rm(list=ls())
+
+set.seed(123)
+
+summarizeColumns(iris)
+
+data<-iris[,-5]
+cluster_kmeans<-lapply(2:6, function(k) kmeans(data, k))
+cluster_pam<-lapply(2:6, function(k) pam(data, k))
+
+
+```
+
+
+##Wewnętrzne indeksy 
+
+Zbadam trzy indeksy wewnętrzne, które są zaimplementowane w R. Są to :
+
+* indek Dunn'a
+
+* indeks Xie Beni
+
+* indeks Davies'a Bouldin
+
+W pierwszej kolejności omówię inerpretacje powyższych indeksów.
+
+### Indeks Dunna 
+Jest definiowany jako iloraz odległości minimalnej między punktami różnych klastróœ, a największą odległością wewnątrz klastra. 
+
+$$\frac{dmin}{dmax} = Dunn$$
+Dążymy do maksymalizacji powyższej wartości.
+
+
+###Indeks Xie Beni
+Definiowany jako iloraz  średniego błędu kwadratowego i minimalnego kwadratu odległości między punktami w klastrach. Najlepszy wynik to minimum otrzymanych wartości
+
+###Indeks  Davies'a Bouldin
+Jest definiowany jako stosunek rozproszenia wewnątrz klastra do sepracji między klastrami. Niższa wartość oznacza, że grupowanie jest lepsze.
+
+
+
+##Wyniki
+
+```{r,  echo=FALSE, message=FALSE, warning=FALSE}
+
+
+indeks_in_kmeans<-sapply(1:5, function(i) intCriteria(as.matrix(data), cluster_kmeans[[i]]$cluster, c("Dunn", "Xie_Beni", "Davies_Bouldin")))
+
+
+plot(2:6, unlist(indeks_in_kmeans[1,]), xlab = "k", ylab="indeks Dunna ", col ="green", pch =19)
+title("Metoda kmeans")
+plot(2:6, unlist(indeks_in_kmeans[2,]), xlab = "k", ylab="indeks Xie Beni ", col ="red", pch =19)
+title("Metoda kmeans")
+plot(2:6, unlist(indeks_in_kmeans[3,]), xlab = "k", ylab="indeks Davies'a Bouldini ", col ="orange", pch =19)
+title("Metoda kmeans")
+
+
+
+```
+
+####Wnioski 1
+
+Dla metody k-średnich indeks Dunna przyjmuje wartość maksymalną dla k=3, jak też powinno być. 
+Indeks Xie Beni osiąga minimum dla k=2 oraz k=3. Dwie odmiany muszą być względem trzeciej podobne do siebie, dlatego opcja z dwoma klastrami też jest uznawana za dobrą. Dla ineksu Davies'a Bouldini'ego najlepszym podziałem jest k=2.
+
+
+```{r,  echo=FALSE, message=FALSE, warning=FALSE}
+
+
+indeks_in_pam<-sapply(1:5, function(i) intCriteria(as.matrix(data), cluster_pam[[i]]$cluster, c("Dunn", "Xie_Beni", "Davies_Bouldin")))
+
+
+
+plot(2:6, unlist(indeks_in_pam[1,]), xlab = "k", ylab="indeks Dunna ", col ="green", pch =19)
+title("Metoda PAM")
+plot(2:6, unlist(indeks_in_pam[2,]), xlab = "k", ylab="indeks Xie Beni ", col ="red", pch =19)
+title("Metoda PAM")
+plot(2:6, unlist(indeks_in_pam[3,]), xlab = "k", ylab="indeks Davies'a Bouldini ", col ="orange", pch =19)
+title("Metoda PAM")
+
+
+```
+
+
+####Wnioski 2
+Analizując wyniki dla  metody PAM wyniki są małozadawalające. Indeks Dunna ma wartość maksymalną dla więcej niż 3 klastrów. Indeks Xie Beni nie minimalizuje sie dla k=3, jedynie kształt wykresu dla indeksu Davies'a Bouldini'ego jest podobny do tego z metody k-średnich, czyli najlepszy wynik dla k=2.
+
+##Zewnętrzne indeksy
+
+Z zewnętrzynych indeksów omówię indeks Jaccarda. Porównam podobieństwo otrzymanych klastrów, do faktycznych klass jakie są w zbiorze iris.
+
+
+### Indeks Jaccarda
+
+Współczynnik Jaccarda mierzy podobieństwo między dwoma zbiorami i jest zdefiniowany jako iloraz mocy części wspólnej zbiorów i mocy sumy tych zbiorów. Wartości jakie przyjmuje zawierają się w przedziale <0,1>. 
+Jeśli zbiory są do siebie podobne to indeks Jaccarda jest bliski wartości 1, w przeciwnym razie zmierza do 0.
+
+
+
+```{r,  echo=FALSE, message=FALSE, warning=FALSE}
+
+data_class<-iris
+
+data_class$Species<-sapply(data_class$Species, function(i)
+  if(i == "setosa" ){
+    i<-1
+    
+  }
+  else if(i == "versicolor" ){
+    i<-2
+    
+  }
+  else {
+    i<-3
+  })
+
+data_class$Species<-as.integer(data_class$Species)
+
+indeks_ex_means<-unlist(sapply(1:5, function(i) extCriteria(data_class$Species, cluster_kmeans[[i]]$cluster, "jaccard")))
+plot(2:6, indeks_ex_means, xlab = "k", ylab="indeks Jaccarda ", col ="blue", pch =19)
+title("Metoda kmeans")
+
+indeks_ex_pam<-unlist(sapply(1:5, function(i) extCriteria(data_class$Species, cluster_pam[[i]]$cluster, "jaccard")))
+plot(2:6, indeks_ex_pam, xlab = "k", ylab="indeks Jaccarda ", col ="red", pch =19)
+title("Metoda PAM")
+
+```
+
+
+####Wnioski 4
+Najlepsze wyniki otrzymujemy dla k=3 co nie powinno dziwić. Zbiór iris jest podzielony na 3 odmiany i też dla 3 klastrów powinniśmy otrzymać najwyższą wartość indeksu Jaccarda. Zarówno dla metody kmeans jak i dla PAM wyniki dla k=3 są bardzo zbliżone.
+
+
