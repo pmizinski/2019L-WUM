@@ -1,0 +1,153 @@
+---
+title: "Praca domowa #6"
+author: "Małgorzata Wachulec"
+date: "29/05/2019"
+output: 
+  html_document:
+    theme: cerulean
+---
+
+## Wstęp 
+
+W tej pracy domowej omówionych będzie kilka metod oceny algorytmów klasteryzujących na danych iris. Będziemy korzystać z indeksów opisanych w artykule "On Clustering Validation Techniques", zaimplementowanych w bibliotece clusterCrit.
+
+```{r setup, include=FALSE}
+# libraries
+library(clusterCrit)
+library(stats)
+library(Gmedian)
+
+set.seed(123, "L'Ecuyer")
+```
+
+## Zewnętrzne indeksy porównujące
+
+### Indeks Huberta
+
+Pierwszą metodą oceny klastrów utworzonych przez algorytm klasteryzujący jest porównanie ich do prawdziwych etykiet, którymi dysponujemy w przypadku danych iris. Takie podejście jest nazywane external jako, że musimy mieć informację z zewnątrz o prawidłowych etykietach dla danego zbioru. Jednym z indeksów tzw. zewnętrznych omówionych w artykule jest indeks Huberta. Sprawdźmy, jaki da wynik dla algorytmu kmeans, dla prawidłowej liczby klastrów równej 3:
+
+```{r ext, echo=FALSE}
+dane <- iris
+dane$Species <- as.integer(ifelse(dane$Species == 'setosa',1, ifelse(dane$Species == 'versicolor', 2,3)))
+kmeans_result <- kmeans(dane[,1:4],centers=3)
+extCriteria(dane$Species,kmeans_result$cluster,"Hubert")
+```
+
+Jeżeli mamy dostępne etykiety dla danego zbioru, to pewnie mamy też informację, jakiej liczby klastów poszukujemy, lecz dla porównania sprawdzmy wartość tego samego indeksu dla 2, 4, 5 oraz 6 klastrów dla tego samego algorytmu i tych samych danych:
+
+```{r ext2, echo=FALSE}
+kmeans_result2 <- kmeans(dane[,1:4],centers=2)
+extCriteria(dane$Species,kmeans_result2$cluster,"Hubert")
+kmeans_result4 <- kmeans(dane[,1:4],centers=4)
+extCriteria(dane$Species,kmeans_result4$cluster,"Hubert")
+kmeans_result5 <- kmeans(dane[,1:4],centers=5)
+extCriteria(dane$Species,kmeans_result5$cluster,"Hubert")
+kmeans_result6 <- kmeans(dane[,1:4],centers=6)
+extCriteria(dane$Species,kmeans_result6$cluster,"Hubert")
+```
+
+Jak widać, wartość indeksu Huberta malała w miarę, jak oddalaliśmy się od prawidłowej liczby klastrów. Często jednakże zdarza się, że zwiększenie liczby klastrów zwiększa też wartość indeksu i wtedy, aby wytypować odpowiednią liczbę klastrów należy użyć tak zwanej metody "łokcia", to znaczy zobaczyć, od jakiej liczby klastrów ten przyrost maleje i taką ich liczbę wyznaczać.
+
+Porównajmy w takim razie ideks dla algorytmu kmeans z innym podobnym algorytmem - kGmedian z bibliteki Gmedian:
+
+```{r ext3, echo=FALSE}
+kmedian_result <- kGmedian(dane[,1:4],ncenters = 3)
+kmedian_result$cluster <- as.integer(kmedian_result$cluster)
+extCriteria(dane$Species,kmedian_result$cluster,"Hubert")
+```
+
+Wygląda na to, że klastry wyznaczone algorytmem kGmedian są lepsze od tych wyznaczonych metodą kmeans. Przyjrzyjmy się teraz metodom, które nie wykorzystują etykiet i sprawdźmy czy także one zdecydują, że algorytm kGmedian lepiej niż kmeans klasteryzuje dane iris.
+
+## Wewnętrzne indeksy porównujące
+
+W przeciwieństwie do zewnętrznych, wewnętrzne indeksy porównujące nie wykorzystują etykiet danego zbioru - w praktyce często nie mamy do nich dostępu, co więcej, jeżeli je mamy to raczej użylibyśmy klasyfikacji a nie metody klastrującej. Wewnętrzne indeksy porównujące sprawdzają zwartość klastrów i ich odległości od innych - interesuje nas, żeby te wartości były jak najwyższe, jako że wtedy możemy uznać dany podział danych za poprawny.
+
+### Indeks Dunn'a
+
+Indeks Dunn'a może przybierać wartości od 0 do nieskończoności i powinien być maksymalizowany. Sprawdźmy, ile wynosi dla algorytmu kmeans na zbiorze iris dla 3 klastrów:
+
+```{r dunn, echo=FALSE}
+y3 <- intCriteria(as.matrix(dane[,1:4]),kmeans_result$cluster,"Dunn")
+y3
+```
+
+Wartość indeksu dla algorytmu kmeans z trzema klastrami wydaje się być mała, lecz na razie nie mamy do czego jej porównać. Załóżmy, że skoro nie używamy etykiet, to tak naprawdę ich nie mamy i nie wiemy na ile klastrów powinniśmy podzielić nasz zbiór. Zobaczmy, czy indeks Dunn'a pomógłby nam w tej decyzji - wyliczmy go kolejno dla algorytmu kmeans z kolejno 2, 4, 5 oraz 6 klastrami i przedstawiamy je na wykresie:
+
+```{r dunn2, echo=FALSE}
+y <- c(intCriteria(as.matrix(dane[,1:4]),kmeans_result2$cluster,"Dunn")[[1]],
+y3,
+intCriteria(as.matrix(dane[,1:4]),kmeans_result4$cluster,"Dunn")[[1]],
+intCriteria(as.matrix(dane[,1:4]),kmeans_result5$cluster,"Dunn")[[1]],
+intCriteria(as.matrix(dane[,1:4]),kmeans_result6$cluster,"Dunn")[[1]])
+x <- 2:6
+plot(x,y,type = "l", ylab = "Indeks Dunn'a", xlab = "Liczba klastrow", main = "Indeks Dunn'a dla wybranej liczby klastrow (kmeans)")
+```
+
+Jak widać, dla liczby klastrów równej 3 wartość indeksu Dunn'a jest zmaksymalizowana - przynajmniej lokalnie, co daje nam przeświadczenie, że wybór 3 klastrów jest trafny. Sprawdźmy, jak ma się on dla tej samej liczby klastrów dla algorytmu kGmedian:
+
+```{r dunn3, echo=FALSE}
+intCriteria(as.matrix(dane[,1:4]),kmedian_result$cluster,"Dunn")
+```
+
+Indeks Dunn'a dla algorytmu kGmedian jest niższy niż ten dla algorytmu kmeans, co oznacza, że wyznaczone przez niego klastry były mniej zwarte lub mniej odległe od pozostałych. To oznacza, że gdybyśmy faktycznie nie dysponowali etykietami, wybralibyśmy algorytm kmeans do klastrowania danych ze zbioru iris, choć znając prawdziwe etykiety wiemy, że algorytm kGmedian radził sobie z tym zadaniem lepiej.
+
+### Algorytm Davies'a Bouldin'ego
+
+Inną wewnętrzną miarą klasteryzacji wymienioną w artykule jest indeks Davies-Bouldin. W przeciwieństwie do indeksu Dunn'a ten indeks będziemy minimalizować, aby otrzymać najlepszy dobór klastrów. Sprawdźmy jego wartości dla algorytmu kmeans i różnej liczby klastrów:
+
+```{r db, echo=FALSE}
+y <- c(intCriteria(as.matrix(dane[,1:4]),kmeans_result2$cluster,"Davies_Bouldin")[[1]],
+intCriteria(as.matrix(dane[,1:4]),kmeans_result$cluster,"Davies_Bouldin")[[1]],
+intCriteria(as.matrix(dane[,1:4]),kmeans_result4$cluster,"Davies_Bouldin")[[1]],
+intCriteria(as.matrix(dane[,1:4]),kmeans_result5$cluster,"Davies_Bouldin")[[1]],
+intCriteria(as.matrix(dane[,1:4]),kmeans_result6$cluster,"Davies_Bouldin")[[1]])
+x <- 2:6
+plot(x,y,type = "l", ylab = "Davies-Bouldin", xlab = "Liczba klastrow", main = "Davies-Bouldin dla wybranej liczby klastrow (kmeans)")
+```
+
+Jak widać, wartość tego indeksu jest najmniejsza dla dwóch klastrów. Wynika to z natury zbioru danych Iris - gatunek irysów Setosa jest znacznie różny od pozostałych, a gatunki Virginica i Versicolor są do siebie podobne i mają zbliżone długości i szerokości płatków i działek kielicha - dane nam dostępne.
+
+Sprawdźmy teraz wartości tego indeksu dla algorytmu kGmedian dla dwóch i trzech klastrów:
+
+```{r db2, echo=FALSE}
+kmedian_result2 <- kGmedian(dane[,1:4],ncenters = 2)
+kmedian_result2$cluster <- as.integer(kmedian_result2$cluster)
+intCriteria(as.matrix(dane[,1:4]),kmedian_result2$cluster,"Davies_Bouldin")[[1]]
+intCriteria(as.matrix(dane[,1:4]),kmedian_result$cluster,"Davies_Bouldin")[[1]]
+```
+
+Jeszcze raz dla przypomnienia dla algorytmu kmeans dla dwóch i trzech klastrów miara Davies'a-Bouldin'ego ma odpowiednio wartości:
+
+```{r db3, echo=FALSE}
+intCriteria(as.matrix(dane[,1:4]),kmeans_result2$cluster,"Davies_Bouldin")[[1]]
+intCriteria(as.matrix(dane[,1:4]),kmeans_result$cluster,"Davies_Bouldin")[[1]]
+```
+
+Minimalną wartość osiągnął algorytm kGmedian dla 2 klastrów, co jest wynikiem różnym od dotychczas uzyskanych.
+
+### Indeks Calinski'ego-Harabasz'a
+
+W artykule napisane jest, że według jednego ze zródeł indeks Calinski'ego-Harabasz'a jest uważany za jedną z sześciu najlepszych miar klasteryzacji. Sprawdźmy zatem, czy ten wewnętrzny indeks podpowie nam, który algorytm jest najlepszy dla danych ze zbioru iris (według indeksu Huberta wykorzystującego etykietmy jest to algorytm kGmedian dla 3 klastrów).
+
+```{r ch, echo=FALSE}
+y <- c(intCriteria(as.matrix(dane[,1:4]),kmeans_result2$cluster,"Calinski_Harabasz")[[1]],
+intCriteria(as.matrix(dane[,1:4]),kmeans_result$cluster,"Calinski_Harabasz")[[1]],
+intCriteria(as.matrix(dane[,1:4]),kmeans_result4$cluster,"Calinski_Harabasz")[[1]],
+intCriteria(as.matrix(dane[,1:4]),kmeans_result5$cluster,"Calinski_Harabasz")[[1]],
+intCriteria(as.matrix(dane[,1:4]),kmeans_result6$cluster,"Calinski_Harabasz")[[1]])
+x <- 2:6
+plot(x,y,type = "l", ylab = "Calinski_Harabasz", xlab = "Liczba klastrow", main = "Calinski_Harabasz dla wybranej liczby klastrow (kmeans)")
+```
+
+Jak widać indeks Calinski'ego-Harabasz'a, podobnie jak indeks Dunn'a ma największą wartość dla 3 klastrów, co oznacza, że właśnie taka liczba klatrów jest najodpowiedniejsza dla zbioru danych iris. Wartość ta wynosi:
+
+```{r ch3, echo=FALSE}
+intCriteria(as.matrix(dane[,1:4]),kmeans_result$cluster,"Davies_Bouldin")[[1]]
+```
+
+Z kolei dla algorytmu kGmedian indeks ten wynosi:
+```{r ch2, echo=FALSE}
+intCriteria(as.matrix(dane[,1:4]),kmedian_result$cluster,"Davies_Bouldin")[[1]]
+```
+
+Teraz widzimy, że w przeciwieństwie do indeksu Dunn'a, indeks Calinski'ego-Harabasz'a sugeruje, że dla zbioru iris lepszą metodą klasteryzacji jest kGmedian, a nie kmeans (dla 3 klastrów). To samo sugeruje korzystający z prawdziwych etykiet indeks Huberta. 

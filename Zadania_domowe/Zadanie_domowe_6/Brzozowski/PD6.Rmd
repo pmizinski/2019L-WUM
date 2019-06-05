@@ -1,0 +1,207 @@
+---
+title: "Miary jakości klasteryzacji"
+author: "Łukasz Brzozowski"
+date: "03.06.2019"
+output:
+  html_document:
+    df_print: paged
+    toc: true
+    toc_float: true
+    code_folding: hide
+    number_sections: true
+    theme: spacelab
+---
+
+```{r setup, include=FALSE}
+set.seed(1)
+knitr::opts_chunk$set(echo = TRUE, cache = TRUE)
+library(dplyr)
+library(mlr)
+library(ggplot2)
+library(DALEX)
+library(reticulate)
+use_python("C:\\Anaconda\\python")
+```
+
+# Prezentacja danych
+
+Pracuję na zbiorze `dermatology` z bazy OpenML. Dane dotyczą pacjentów z rumieniami różnych klas. Kolumną celu jest w tym wypadku `erythema` określająca stopień rumienia. Kolumna celu osiąga 4 unikalne wartości od 0 do 3.
+
+# Wizualizacja
+
+
+```{r}
+dat <- read.csv("dataset_35_dermatology.csv")
+dat <- na.omit(dat)
+dat <- dat %>% select(-Age)
+summarizeColumns(dat)
+datLabels <- dat[,1]
+datLabels <- datLabels + 1
+dat <- dat[,-1]
+```
+
+Do klasteryzacji użyję metod `kmeans` oraz `cmeans` z implementacji `mlr`.
+
+```{r}
+tsk <- makeClusterTask(data = dat)
+
+lrn1_4 <- makeLearner("cluster.kmeans", par.vals = list(centers = 4))
+lrn2_4 <- makeLearner("cluster.cmeans", par.vals = list(centers = 4))
+
+lrn1_3 <- makeLearner("cluster.kmeans", par.vals = list(centers = 3))
+lrn1_5 <- makeLearner("cluster.kmeans", par.vals = list(centers = 5))
+
+lrn2_3 <- makeLearner("cluster.cmeans", par.vals = list(centers = 3))
+lrn2_5 <- makeLearner("cluster.cmeans", par.vals = list(centers = 5))
+
+model1_4 <- train(lrn1_4, tsk)
+labels1_4 <- model1_4$learner.model$cluster
+
+model1_3 <- train(lrn1_4, tsk)
+labels1_3 <- model1_3$learner.model$cluster
+
+model1_5 <- train(lrn1_5, tsk)
+labels1_5 <- model1_5$learner.model$cluster
+
+model2_4 <- train(lrn2_4, tsk)
+labels2_4 <- model2_4$learner.model$cluster
+
+model2_3 <- train(lrn2_3, tsk)
+labels2_3 <- model2_3$learner.model$cluster
+
+model2_5 <- train(lrn2_5, tsk)
+labels2_5 <- model2_5$learner.model$cluster
+```
+
+# Statystyki
+
+## Indeks Jaccarda
+
+Jako pierwszy policzę indeks Jaccarda obu metod klastrowania oraz wektora etykiet. Mierzy on podobieństwo dwóch zbiorów. Niskie wartości będą sugerowały różne zbiory, a wartości bliskie 1 zbiory podobne. W zbiorze występują cztery etykiety, także tę statystykę obliczę dla modeli z czterema centrami.
+
+$$J(A, B) = \frac{|A\cap{B}|}{|A \cup B|}$$
+
+```{r}
+library("clusteval")
+c1 <- cluster_similarity(labels1_4, datLabels, similarity = "jaccard")
+c2 <- cluster_similarity(labels2_4, datLabels, similarity = "jaccard")
+c3 <- cluster_similarity(labels1_4, labels2_4, similarity = "jaccard")
+```
+
+### Podobieństwa do oryginalnych etykiet
+
+```{r}
+c1
+c2
+```
+
+Widzimy, że otrzymane wyniki są niskie, co oznacza, że klastry oryginalnych etykiet i otrzymanych kolejno metodami `kmeans` oraz `cmeans` są różne, a zatem te metody nie znalazły faktycznych klastrów.
+
+```{r}
+c3
+```
+
+Jak widzimy powyżej, klastry znalezione obiema metodami są do siebie wzajemnie znacznie bardziej podobne, niż do oryginalnych klastrów.
+
+## Indeks Dunna
+
+Jako pierwszą statystykę wewnętrzną wykorzystam indeks Dunna. Określa on, jak 'dobrze' zachowuje się najgorszy klaster w stosunku do pozostałych oraz wyznacza, jak skupione są klastry. Niskie wartości indeksu Dunna oznaczają dużą szerokość najgorszego klastra lub niskie skupienie klastrów.
+
+* 4 klastry
+
+```{r, warning=FALSE}
+dunn1_4 <- clValid::dunn(Data = dat, clusters = labels1_4)
+dunn2_4 <- clValid::dunn(Data = dat, clusters = labels2_4)
+dunn1_4
+dunn2_4
+```
+
+* 3 klastry
+
+```{r, warning=FALSE}
+dunn1_3 <- clValid::dunn(Data = dat, clusters = labels1_3)
+dunn2_3 <- clValid::dunn(Data = dat, clusters = labels2_3)
+dunn1_3
+dunn2_3
+```
+
+* 5 klastrów
+
+```{r, warning=FALSE}
+dunn1_5 <- clValid::dunn(Data = dat, clusters = labels1_5)
+dunn2_5 <- clValid::dunn(Data = dat, clusters = labels2_5)
+dunn1_5
+dunn2_5
+```
+
+Widzimy, że według indeksu Dunna oba modele uzyskały najlepsze wyniki dla 3 klastrów. Otrzymane wyniki sugerują, że klastry nie są dobrze separowalne lub co najmniej jeden klaster jest bardzo szeroki.
+
+## Indeks Davisa-Bouldina
+
+Następnie chciałbym sprawdzić, jakie wyniki osiągają obie klasteryzacje dla indeksu Daviesa-Bouldina. Mierzy on, stosunek wewnętrznego rozbicia klastrów do separowalności klastrów, stąd mniejsze wartości oznaczają lepszą klasteryzację.
+
+* 4 klastry
+
+```{r, warning=FALSE}
+db1_4 <- clusterSim::index.DB(x = dat, cl = labels1_4)
+db2_4 <- clusterSim::index.DB(x = dat, cl = labels2_4)
+db1_4$DB
+db2_4$DB
+```
+
+* 3 klastry
+
+```{r, warning=FALSE}
+db1_3 <- clusterSim::index.DB(x = dat, cl = labels1_3)
+db2_3 <- clusterSim::index.DB(x = dat, cl = labels2_3)
+db1_3$DB
+db2_3$DB
+```
+
+* 5 klastrów
+
+```{r, warning=FALSE}
+db1_5 <- clusterSim::index.DB(x = dat, cl = labels1_5)
+db2_5 <- clusterSim::index.DB(x = dat, cl = labels2_5)
+db1_5$DB
+db2_5$DB
+```
+
+Ponownie, ze względu na fakt, że niższy wynik indeksu DB oznacza lepszą klasteryzację, klasteryzacja na 3 zbiory osiąga najlepsze wyniki. Wszystkie wyniki są jednak wysokie, co potwierdza trudną separowalność klastrów i ich niewielką spójność.
+
+## Indeks Gamma Huberta
+
+Na koniec zaprezentuję wyniki indeksu Gamma Huberta. Określa on, czy macierz odległości pomiędzy punktami jest podobna do macierzy świadczącej o przynależności do tego samego klastra. Przedstawiona wersja indeksu gamma jest modyfikacją Pearsona z pakietu `fpc`.
+
+* 4 klastry
+
+```{r, warning=FALSE}
+hb1_4 <- fpc::cluster.stats(dist(dat), labels1_4)
+hb2_4 <- fpc::cluster.stats(dist(dat), labels2_4)
+hb1_4$pearsongamma
+hb2_4$pearsongamma
+```
+
+* 3 klastry
+
+```{r, warning=FALSE}
+hb1_3 <- fpc::cluster.stats(dist(dat), labels1_3)
+hb2_3 <- fpc::cluster.stats(dist(dat), labels2_3)
+hb1_3$pearsongamma
+hb2_3$pearsongamma
+```
+
+* 5 klastrów
+
+```{r, warning=FALSE}
+hb1_5 <- fpc::cluster.stats(dist(dat), labels1_5)
+hb2_5 <- fpc::cluster.stats(dist(dat), labels2_5)
+hb1_5$pearsongamma
+hb2_5$pearsongamma
+```
+
+Wysokie wyniki indeksu gamma oznaczają lepszą klasteryzację, zatem ponownie podział na 3 klastry jest najlepszym wyborem. Otrzymane wyniki mówią nam, że podział na klastry jest podobny do podziału przez odległości, co jak najbardziej zgadza się ze sposobem działania metod `kmeans` i `cmeans`.
+
+# Podsumowanie
+
+Podsumowując wszystkie otrzymane wyniki, możemy stwierdzić, że klasteryzacja powinna przebiegać przy podziale na 3 grupy, a nie jak w domyśle na 4. Zbiór danych jest trudno separowalny, a klastry mają niski współczynnik skupienia, jednak jest to częste zjawisko przy danych medycznych.
