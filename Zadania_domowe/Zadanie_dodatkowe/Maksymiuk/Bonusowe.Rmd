@@ -1,0 +1,99 @@
+---
+title: "Bonusowe"
+author: "Szymon Maksymiuk"
+date: "03.06.2019"
+output:
+  html_document:
+    df_print: paged
+    toc: true
+    toc_float: true
+    code_folding: hide
+    number_sections: true
+    theme: spacelab
+---
+
+
+# Rydelek-Merkel-Stawikowski, Chol od thal
+
+Usuwamy wartości `0` ze zmiennej `thal` gdyż można je uznać za NA.
+
+```{r message=FALSE, warning=FALSE}
+data <- read.csv("heart.csv")
+library(ggplot2)
+library(readr)
+library(dplyr)
+library(scales)
+data <- data[data$thal!=0,]
+data$thal[data$thal == 1] <- "Fixed defect"
+data$thal[data$thal == "2"] <- "Normal"
+data$thal[data$thal == "3"] <- "Revarsable defect"
+
+
+ggplot(data = data, aes(x = data$chol, y = data$trestbps, color = as.factor(data$thal))) +
+  geom_point() +
+  xlab("Chol")+
+  ylab("Trestbps")+
+  labs(color = "Thal")+
+  theme_bw()
+  
+
+```
+
+# Werner-Jastrzębski-Gajewska
+
+Szczerze mówiąc, nie mam pojęcia co ten wykres przedstawia oraz czy ma jakikolwiek sens. Szczęśliwie nie mnie to oceniać, więc przedstawię wykres zależności roku, płci oraz liczby odwiedzin. 
+
+```{r}
+dane <- read.csv("01B Po osobach - nowe.csv", sep= ",")
+dane <- dane[1:69,]
+dane <- dane %>% group_by(D1,D2) %>% summarise(liczbaOdwiedzin = sum(P1))
+dane$D1[dane$D1 == 1] <- "Mężczyzna"
+dane$D1[dane$D1 == "2"] <- "Kobieta"
+dane$liczbaOdwiedzin <- as.numeric(as.character(dane$liczbaOdwiedzin))
+dane$liczbaOdwiedzin <- as.numeric(as.character(dane$liczbaOdwiedzin))
+dane$D1 <- as.factor(dane$D1)
+ggplot(data=dane, aes(x=dane$D2, y=dane$liczbaOdwiedzin, fill=dane$D1)) +
+geom_bar(stat="identity", width = 0.8, position = position_dodge(width = 0.9), colour="black")+
+geom_text(aes(label=liczbaOdwiedzin), vjust=1.6, color="black",
+          position = position_dodge(0.9), size=3.5)+
+ylim(0,max(dane$liczbaOdwiedzin)+4)+
+scale_fill_brewer(palette="Set2")+
+labs(x="Rok", y="Liczba odwiedzin", fill = "Płeć")+
+ggtitle("Łączna liczba odwiedzin z podziałem na płcie")+
+theme_minimal()+
+theme(plot.title = element_text(hjust = 0.5))
+```
+
+Powyższy wykres przedstawia łączna liczbę odwiedzin w danym roku kobiet oraz mężczyzn.
+
+# Hubert
+
+```{r message=FALSE, warning=FALSE}
+enc <- guess_encoding("allegro-api-transactions.csv", n_max = 10000)[[1]]
+allegroApiTransactions <- as.data.frame(read_csv("allegro-api-transactions.csv", locale = locale(encoding = enc[1])))
+allegroCategoriesEng <- as.data.frame(read_delim("allegro-categories-eng.txt", delim=";"))
+data <- full_join(allegroApiTransactions, allegroCategoriesEng)
+data <- data[,-dim(data)[2]]
+data <- select(data, date, main_category)
+top6 <- table(data$main_category) %>% sort(decreasing = TRUE) %>% names()
+top6 <- top6[1:6]
+data <- data[data$main_category %in% top6,]
+
+for (i in 0:23) {
+  data$date[(as.POSIXct(data$date, tz="UTC") > as.POSIXct(paste("2016-04-03 ", i, ":00:00", sep = ""), tz = "UTC")) & (as.POSIXct(data$date, tz = "UTC") < as.POSIXct(paste("2016-04-03 ", i+1, ":00:00", sep = ""), tz = "UTC"))] <- as.POSIXct(paste("2016-04-03 ", i, ":00:00", sep = ""), tz = "UTC")
+}
+
+data <- data %>% group_by(main_category, date) %>% summarise(licznosc = table(main_category))
+
+ggplot(data, aes(x = date, y = licznosc, colour = main_category)) +
+geom_line()   
+```
+
+
+# Propozycja sprawdzania symetrii
+
+Jak wiemy miarą symetrii jest skośność. Wystarczy mądrym lapllyem lub pętlą wyliczyć skośności każdej z kolumn. Następnie wybrać pewną granicę tolerancji symetrii, a następnie zwrócić zmienne, które nie spełniają warunku.
+
+# Podziękowania
+
+Chciałbym sedecznie podziękować Pani mgr Alicji Gosiewskiej za spojrzenie na kod bo po tym nagle zaczął działać.
