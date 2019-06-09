@@ -1,0 +1,110 @@
+---
+title: "PD7"
+author: "Karol Pysiak"
+date: "`r format(Sys.time(), '%d - %m - %Y')`"
+output:
+  html_document:
+    theme: simplex
+    df_print: paged
+    toc: true
+    toc_float: true
+    code_folding: hide
+    number_sections: true
+editor_options: 
+  chunk_output_type: console
+---
+
+```{r libraries, echo=FALSE, include=FALSE}
+library(reshape2)
+library(factoextra)
+library(gridExtra)
+library(cluster)
+library(ggplot2)
+k <- 2:30
+```
+
+
+# Wstęp
+
+W tej pracy domowej przedstawimy porównanie klasteryzacji dwoma różnymi sposobami: k-średnich(`kmeans`) i k-medoidów(`pam`). Porównanie zostanie wykonane na sztucznie wygenerowanym zbiorze przygotowanym specjalnie do klasteryzacji. Ma on $5000$ punktów podzielonych na $15$ klastrów. Dla skrócenia czasu wykonywania się algorytmów z naszego zbioru wylosujemy $1000$ punktów na których będziemy pracować. 
+
+```{r dataset}
+input <- read.csv('~/Desktop/s1.csv', sep = ' ', header = 0)[c(5, 9)]
+prepared <- na.omit(data.frame(scale(input[!is.na(input),])))
+dane <- prepared[sample(1:dim(prepared)[1], 1000),]
+rownames(dane) <- NULL
+colnames(dane) <- c('X', 'Y')
+plot(dane)
+```
+
+# Porównanie optymalnej liczby klastrów
+
+
+```{r models}
+kmeans_model <- lapply(k, function(x){ kmeans(dane, x) })
+kmeans_clust <- lapply(kmeans_model, function(x){ x$cluster })
+kmeans_tot.withinss <- unlist(lapply(kmeans_model, function(x){ x$tot.withinss }))
+kmeans_centroids <- lapply(kmeans_model, function(x){ x$centers })
+
+
+pam_model <- lapply(k, function(x){ pam(dane, x) })
+pam_clust <- lapply(pam_model, function(x){ x$clustering })
+pam_objective <- data.frame(k, do.call(rbind, lapply(pam_model, function(x){ x$objective })))
+pam_centroids <- lapply(pam_model, function(x){ x$medoids })
+pam_melt <- melt(pam_objective, id.vars = 'k')
+
+```
+
+Porównanmy jakość naszych modeli dla $2, 3, ..., 30$ klastrów. Pamiętajmy, że optymalna liczba klastrów powinna wynosić 15, gdyż na tyle jest podzielony nasz zbiór. 
+
+```{r kmeans_plot}
+plot(x = k, y = kmeans_tot.withinss, type = 'b', col = 'blue', main='kmeans total withinss')
+```
+
+Wykres łokciowy `kmeans` jest trochę nieregularny. Nie wskazuje on wyraźnie $15$ jako optymalnej liczby klastrów. Już $7$ czy $10$ klastrów wyglądają jak optymalne wartości. $15$ nie jest wyraźnie zaznaczone na wykresie. Taka nieścisłość wykresu może sygnalizować nam, że klasteryzacja `kmeans` jest dosyć niepewna, tzn. tworzy klastry nawet wbrew ludzkiej intuicji.
+
+```{r pam_plot}
+ggplot(pam_melt, aes(x = k, y = value, fill=variable)) +
+  scale_x_continuous(breaks = k) +
+  geom_line(aes(colour = variable)) +
+  ggtitle('pam objective')
+```
+
+`pam` ma dwie fazy budowy klastrów. Pierwsza `build` odnajduje szybko początkowy zestaw medoidów, a druga `swap` optymalizuje ich pozycje, aby zmniejszyć indeks `objective`. Ten proces widać na powyższym wykresie. `build` zarysowuje ogólną charakterystykę klasteryzacji, ale to dopiero `swap` dobrze dopasowuje klastry do punktów. Tutaj dokładnie widać, że $15$ jest optymalną liczbą klastrów. Sam wykres jest dużo gładszy niż w przypadku `kmeans` co może oznaczać, że `pam` przemyślanie buduje kolejne klastry i jednostajnie zbiega do optymalnego klastrowania.
+
+# Porównanie klastrowania
+
+## Klastry
+
+```{r clust_comp}
+grid.arrange(
+  fviz_cluster(kmeans_model[[14]], data = dane, ellipse.type = "convex")+
+    theme_minimal() + labs(title = paste0("kmeans with ", 14, ' clusters')),
+  fviz_cluster(pam_model[[14]], data = dane, ellipse.type = "convex")+
+    theme_minimal() + labs(title = paste0("pam with ", 14, ' clusters')), nrow = 1)
+```
+
+Ta grafika potwierdza, że `kmeans` łączy klastry nieintuicynie, w sposób nieprzemyślany, brutalny. Klastry `pam` są niemalże idealne, odpowiadają naszej intuicji. 
+
+## Centro/Medoidy
+
+```{r centro_medoids}
+centers <- data.frame(rbind(
+  cbind(kmeans_centroids[[14]], rep('kmeans', dim(kmeans_centroids[[14]])[1])), 
+  cbind(pam_centroids[[14]], rep('pam', dim(pam_centroids[[14]])[1]))))
+colnames(centers) <- c('X', 'Y', 'model')
+rownames(centers) <- NULL
+
+
+ggplot(dane, aes(x = X, y = Y)) +   
+  geom_point() +
+  geom_point(data = data.frame(kmeans_centroids[[14]]), colour = 'red', size = 5) +
+  geom_point(data = data.frame(pam_centroids[[14]]), colour = 'blue', size = 5) +
+  ggtitle('kmeans centroids(red) vs pam medoids(blue)')
+```
+
+Medoidy `pam` trafiają bardzo precyzyjnie w najgęstsze obszary klastrów. Centroidy `kmeans` w większości przypadków nie są źle wymierzone, ale w niektórych przypadkach są nieintuicyjnie rozmieszczone.
+
+# Podsumowanie
+
+`kmeans` w tym eksperymencie mnie nieco negatywnie zaskoczył. Jego działanie jest bardzo intuicyjne, ale jego klastry już mniej. `pam` osiągnął bardzo fajne wyniki, jego klastry były w naszym przypadku idealnie trafione. Zdecydowaną wadą `pam` jest to, że działa dużo dłużej od poczciwego `kmeans`. `kmeans` daje wyniki natychmiast, natomiast kwadratową złożoność `pam` da się bardzo odczuć. Bardzo alarmujący jest wykres łokciowy `kmeans`, gdzie widać, że model słabo dążył do optymalnej liczby klastrów. W tym przypadku, gdzie mieliśmy syntetyczny zbiór danych z widocznymi klastrami `pam` wypadł dużo lepiej od `kmeans`. Ciekawe jakby się ta zależność prezentowała gdyby nasze klastry były słabiej odseparowane.
