@@ -1,0 +1,180 @@
+---
+title: PD7
+author: Bogdan Jastrzębski
+date: "6 czerwca 2019"
+output: 
+  html_document:
+    toc: true
+    number_sections: true
+    toc_float: true
+    theme: "paper"
+---
+
+```{r, echo=FALSE}
+library(gridExtra)
+load('plots.rda')
+```
+
+# Wstęp
+
+W tej pracy porównam działanie dwóch algorytmów klasteryzacji: k-means i k-medoids na ośmiu zbiorach danych "shapes".
+
+Odpowiednią liczbę klastrów będziemy badać wskaźnikami:
+
+* Internal:
+    - silhouette
+    - indeksem Daviesa-Bouldin
+    - indeksem Dunna
+* External:
+    - indeksem Jaccarda
+
+
+# Zbiór danych
+
+Oto jak przedstawiają się nasze zbiory danych:
+
+```{r, echo=FALSE}
+plot(shapes)
+```
+
+Są to zbiory dwuwymiarowe, dzięki czemu będziemy mogli narysować wykresy
+dla różnych etykiet znalezionych algorytmami k-means i k-medoids, a tym samym 
+lepiej zrozumieć różnice w działaniu tych algorytmów. 
+
+# Optymalna liczba klastrów
+
+Tutaj ustalę, która liczba podziału jest optymalna dla k-means i k-medoids oraz dla poszczególnych wskaźników. 
+
+## Silhouette
+
+Oto jak przedstawiają się wykresy silhouette (niebieski - k-means, czerwony - k-medoids):
+```{r, echo=FALSE}
+plot(spi)
+```
+
+Jak już widać algorytmy klasteryzacji czasem różnią się, np. na wykresie trzecim od lewej w górnym rzędzie widać, że optymalna wartość k-means pokrywa się z prawidłową wartością ok. 30 (porównaj wizualizację zbiorów), podczas gdy
+optymalna wartość k-medoids jest o wiele niższa. Na pozostałych wykresach widać jednak, że najlepsze wartości k
+wg. k-means i k-medoids są podobne. W dalszej części przekonamy się, czy także podziały zbiorów są podobne.
+
+## Indeks Daviesa-Bouldin
+
+Oto jak przedstawiają się wykresy indeksu Daviesa-Bouldin (niebieski - k-means, czerwony - k-medoids):
+```{r, echo=FALSE}
+plot(dbpi)
+```
+
+Tutaj także widać, że k-means i k-medoids działają różnie. Pierwszy wykres w górnym rzędzie pokazuje, że mniej więcej od $k=7$ ziobiory zaczynają się klasteryzować w znacząco różny sposób. 
+
+
+## Indeks Dunna
+
+Oto jak przedstawiają się wykresy indeksu Dunna (niebieski - k-means, czerwony - k-medoids):
+```{r, echo=FALSE}
+plot(dpi)
+```
+
+Różnice w działaniu k-means i k-medoids widać przede wszystkim na wykresie pierwszym i trzecim w górnym rzędzie, a także trzecim i czwartym w dolnym.
+
+Szczególnie czwarty na dole zasługuje na większą uwagę, bo widać, że dla $k=5$ k-means znalazło coś ciekawego, a k-medoids nie. 
+
+## Indeks Jaccarda
+Oto jak przedstawiają się wykresy indeksu Jaccarda (niebieski - k-means, czerwony - k-medoids):
+```{r, echo=FALSE}
+plot(jpi)
+```
+
+Podziały na pewno są różne, ale indeks Jaccarda wykazuje, że optymalne liczby klastrów są zbliżone. Szczególne gorzej zadziałał k-medoids dla zbioru trzeciego na górze. 
+
+# Porównanie klastrów dla optymalnych parametrów i ich centrów
+
+## Silhouette
+```{r, echo=FALSE, fig.height = 7}
+grid.arrange(
+     spb1,
+     spb2,
+     spb3,
+     spb4,
+     spb5,
+     spb6,
+     spb7,
+     spb8, nrow=4)
+```
+
+1. Klastry:
+
+Na początku zauważmy, że podziały są w wielu przypadkach dość podobne. 
+Różnią się np. zbiór trzeci w kolumnie drugiej (dwie łódeczki). K-means przewidziało więcej zbiorów, ale za oddają one lepiej podział danych, za to k-medoids podzieliło zbiór niesymetrycznie. Z kolei jeżeli chodzi o zbiór w prawym dolnym rogu, k-means podzieliło zbiór bardziej jak byśmy się tego spodziewali, a k-medoids nie, choś oba podziały są chyba równie dobre (pomijając fakt, że dostajemy inne liczby zbiorów).
+
+2. Centroidy:
+
+Centroidy k-means i k-medoids są bardzo podobne. Np. w pierwszym wierszu drugiej kolumnie albo trzecim wierszu pierwszej kolumnie. Centroidy przy tych samych liczbach klastrów są bardzo podobne.
+
+## Indeks Daviesa-Bouldin
+```{r, echo=FALSE, fig.height = 7}
+grid.arrange(
+     dbpb1,
+     dbpb2,
+     dbpb3,
+     dbpb4,
+     dbpb5,
+     dbpb6,
+     dbpb7,
+     dbpb8, nrow=4)
+```
+
+1. Klastry:
+
+Znalezione klastry są podobne. W pierwszym wierszu, drugiej kolumnie wybrany
+podział jest inny dla k-medoids i k-means, k-medoids dokładniej opisało wyspę w lewym dolnym rogu.
+
+2. Centroidy:
+
+Ponownie, nie widać, by k-medoids poprawiało w jakiś sposób położenie centrów. Są bardzo podobne. 
+
+## Indeks Dunna
+```{r, echo=FALSE, fig.height = 7}
+grid.arrange(
+     dpb1,
+     dpb2,
+     dpb3,
+     dpb4,
+     dpb5,
+     dpb6,
+     dpb7,
+     dpb8, nrow=4)
+```
+
+1. Klastry:
+
+Widać, że metody k-means i k-medoids, przynajmniej dla tych zbiorów, dają bardzo podobne efekty. Nie zawsze, bo k-medoids ma pewne ograniczenia. 
+
+2. Centroidy:
+
+Zauważmy ciekawą rzecz. Na wykresie w czwartym rzędzie w drugiej kolumnie indeks Dunna wybrał różne liczby klastrów. Dlaczego? Jak widać, centra k-means znajdują się dla trzech klas bardzo daleko jakichkolwiek obserwacji.
+Z tego powodu k-medoids nie znalazło dobrych klastrów dla $k=5$. To z jednej strony gorzej, bo dla danej liczby klastrów k-means zwróciło o wiele lepsze klastry, ale z drugiej strony dzięki temu indeks Dunna znalazł lepszą de facto liczbę klastrów.
+
+## Indeks Jaccarda
+```{r, echo=FALSE, fig.height = 7}
+grid.arrange(
+     jpb1,
+     jpb2,
+     jpb3,
+     jpb4,
+     jpb5,
+     jpb6,
+     jpb7,
+     jpb8, nrow=4)
+```
+
+1. Klastry:
+
+Ponieważ indeks Jaccarda wykorzystuje prawidłowe etykiety, wybrane liczby klastrów dla k-means i k-medoids są podobne. Tutaj szczególnie widać, że 
+klastry dla tych metod zbytnio się nie różnią.
+
+2. Centroidy:
+
+Klastry się nie różnią i nie różnią się także centroidy.
+
+# Podsumowanie 
+
+Oba algorytmy klasteryzacji działają bardzo podobnie. Jeżeli jednak chcemy potraktować dwa dobrze oddzielone zbiory jako jeden, k-medoids nie jest pewnie dobrym wyborem. Z drugiej strony łatwiej będzie nam przewidzieć potencjalnie najlepszą liczbę klastrów dla k-medoids.
