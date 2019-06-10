@@ -1,0 +1,184 @@
+---
+title: "WUM PD 6"
+author: "Bartłomiej Granat"
+date: "`r format(Sys.time(), '%d - %m - %Y')`"
+output:
+  html_document:
+    dane_print: paged
+    toc: true
+    toc_float: true
+    code_folding: hide
+    number_sections: true
+---
+  
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, cache = FALSE, warning = FALSE)
+library(OpenML)
+library(cluster)
+library(factoextra)
+library(clValid)
+library(NbClust)
+library(ggplot2)
+library(gridExtra)
+library(ClusterR)
+library(DT)
+
+set.seed(1234)
+
+zoo <- getOMLDataSet(data.id = 62L)
+zoo <- zoo$data
+df <- zoo[-26,]
+animals <- df$animal
+rownames(df) <- animals
+df <- df[,-1]
+df_clus <- df[,-17]
+df_clus <- as.data.frame(ifelse(df_clus == "true",1,0))
+df_clus$legs <- df$legs
+df_clus <- as.data.frame(scale(df_clus))
+```
+
+# Wstęp
+
+Poniższy raport przedstawia porównanie algorytmu $KMeans$ oraz $PAM$, a więc k-średnich i k-medoidów.
+
+Dane, na których dokonam klasteryzacji to $zoo$ z $OpenML$
+
+```{r}
+DT::datatable(head(df))
+```
+
+# Liczba klastrów
+
+Najpierw przyjrzyjmy się jak wygląda dzaiłanie algorytmów dla kolejnych wartości liczby klastrów.
+
+```{r fig.width = 9}
+km.res2 <- kmeans(df_clus, 2)
+km.res3 <- kmeans(df_clus, 3)
+km.res4 <- kmeans(df_clus, 4)
+km.res5 <- kmeans(df_clus, 5)
+km.res6 <- kmeans(df_clus, 6)
+km.res7 <- kmeans(df_clus, 7)
+km.res8 <- kmeans(df_clus, 8)
+km.res9 <- kmeans(df_clus, 9)
+km.res10 <- kmeans(df_clus, 10)
+pam.res2 <- pam(df_clus, 2)
+pam.res3 <- pam(df_clus, 3)
+pam.res4 <- pam(df_clus, 4)
+pam.res5 <- pam(df_clus, 5)
+pam.res6 <- pam(df_clus, 6)
+pam.res7 <- pam(df_clus, 7)
+pam.res8 <- pam(df_clus, 8)
+pam.res9 <- pam(df_clus, 9)
+pam.res10 <- pam(df_clus, 10)
+
+grid.arrange(
+fviz_cluster(km.res2, data = df_clus, frame.type = "convex")+
+  theme_minimal() + labs(title = "Kmeans - 2"),
+fviz_cluster(pam.res2, data = df_clus, frame.type = "convex")+
+  theme_minimal() + labs(title = "Pam - 2"), nrow =1)
+
+grid.arrange(
+fviz_cluster(km.res3, data = df_clus, frame.type = "convex")+
+  theme_minimal() + labs(title = "Kmeans - 3"),
+fviz_cluster(pam.res3, data = df_clus, frame.type = "convex")+
+  theme_minimal() + labs(title = "Pam - 3"), nrow =1)
+
+grid.arrange(
+fviz_cluster(km.res4, data = df_clus, frame.type = "convex")+
+  theme_minimal() + labs(title = "Kmeans - 4"),
+fviz_cluster(pam.res4, data = df_clus, frame.type = "convex")+
+  theme_minimal() + labs(title = "Pam - 4"), nrow =1)
+
+grid.arrange(
+fviz_cluster(km.res5, data = df_clus, frame.type = "convex")+
+  theme_minimal() + labs(title = "Kmeans - 5"),
+fviz_cluster(pam.res5, data = df_clus, frame.type = "convex")+
+  theme_minimal() + labs(title = "Pam - 5"), nrow =1)
+
+grid.arrange(
+fviz_cluster(km.res6, data = df_clus, frame.type = "convex")+
+  theme_minimal() + labs(title = "Kmeans - 6"),
+fviz_cluster(pam.res6, data = df_clus, frame.type = "convex")+
+  theme_minimal() + labs(title = "Pam - 6"), nrow =1)
+
+grid.arrange(
+fviz_cluster(km.res7, data = df_clus, frame.type = "convex")+
+  theme_minimal() + labs(title = "Kmeans - 7"),
+fviz_cluster(pam.res7, data = df_clus, frame.type = "convex")+
+  theme_minimal() + labs(title = "Pam - 7"), nrow =1)
+
+grid.arrange(
+fviz_cluster(km.res8, data = df_clus, frame.type = "convex")+
+  theme_minimal() + labs(title = "Kmeans - 8"),
+fviz_cluster(pam.res8, data = df_clus, frame.type = "convex")+
+  theme_minimal() + labs(title = "Pam - 8"), nrow =1)
+
+grid.arrange(
+fviz_cluster(km.res9, data = df_clus, frame.type = "convex")+
+  theme_minimal() + labs(title = "Kmeans - 9"),
+fviz_cluster(pam.res9, data = df_clus, frame.type = "convex")+
+  theme_minimal() + labs(title = "Pam - 9"), nrow =1)
+
+grid.arrange(
+fviz_cluster(km.res10, data = df_clus, frame.type = "convex")+
+  theme_minimal() + labs(title = "Kmeans - 10"),
+fviz_cluster(pam.res10, data = df_clus, frame.type = "convex")+
+  theme_minimal() + labs(title = "Pam - 10"), nrow =1)
+
+```
+
+# Indeksy
+
+Przy użyciu biblioteki $NbClust$ określę na ile grup dzielić zbiór.
+Ponieważ zbiór ma jedynie 100 obserwacji sprawdzam wartości indeksów dla liczby klastrów od $2$ do $10$
+
+Sprawdzam indeksy "Gap statistic", "Total within sum of square" i "Silhouette"
+
+```{r}
+grid.arrange(
+fviz_nbclust(df_clus, pam, method="gap_stat") + labs(title = "pam - gap_stat"),
+fviz_nbclust(df_clus, kmeans, method="gap_stat") + labs(title = "kmeans - gap_stat"), nrow =1)
+grid.arrange(
+fviz_nbclust(df_clus, pam, method="wss") + labs(title = "pam - wss"),
+fviz_nbclust(df_clus, kmeans, method="wss") + labs(title = "kmeans - wss"), nrow = 1)
+grid.arrange(
+fviz_nbclust(df_clus, pam, method="silhouette") + labs(title = "pam - sh"),
+fviz_nbclust(df_clus, kmeans, method="silhouette") + labs(title = "kmeans - sh"), nrow = 1)
+```
+
+Na podstawie powyższych wykresów zarówno dla $KMeans$ jak i $PAM$ optymalna liczba klastrów to 4. Spójrzmy jeszcze na indeksy "Connectivity" i "Dunn".
+
+```{r}
+internal <- clValid(df_clus, nClust = 2:10, clMethods = c("kmeans"), validation = "internal")
+summary(internal)
+
+internal <- clValid(df_clus, nClust = 2:10, clMethods = c("pam"), validation = "internal")
+summary(internal)
+```
+
+Dla $KMeans$ wynik jest niejednoznaczny, natomiast dla $PAM$ znów pojawiła się liczba 4. Przyjmijmy zatem, że dla obu algorytmów optymalną liczbą będzie właśnie 4.
+
+# Porównanie
+
+```{r}
+grid.arrange(
+fviz_cluster(km.res4, data = df_clus, frame.type = "convex", show.clust.cent = TRUE, geom = "point")+
+  theme_minimal() + labs(title = "Kmeans - 4"),
+fviz_cluster(pam.res4, data = df_clus, frame.type = "convex", show.clust.cent = TRUE, geom = "point")+
+  theme_minimal() + labs(title = "Pam - 4"), nrow =1)
+```
+
+Widzimy, że klaster 2 na rysunku 1. i klaster 4 na rysunku 2.są jednakowe i mają te same centra. Jednak wszystkie pozostałe się znacząco różnią zaróWno jeśli chodzi o klastry jak i o centra.
+
+# Zbieżność
+
+Wykonałem benchmark dla 5000 replikacji i jak widać algorytm k-średnich zbiega dla zbioru $zoo$ nieco szybciej od algorytmu k-medoidów.
+
+```{r message=FALSE, warning=FALSE}
+library(rbenchmark)
+benchmark("kmeans" = {eclust(df_clus, "kmeans", k = 4, graph = FALSE)},
+                  'pam'= {eclust(df_clus, "pam", k = 4, graph = FALSE)},
+          replications = 5000,
+          columns = c("test", "replications", "elapsed",
+                      "relative", "user.self", "sys.self"))
+```
