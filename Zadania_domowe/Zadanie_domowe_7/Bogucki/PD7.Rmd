@@ -1,0 +1,99 @@
+---
+title: "Praca domowa 7"
+author: "Wojciech Bogucki"
+date: "9 czerwca 2019"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(factoextra)
+library(cluster)
+library(dplyr)
+```
+
+# Zbiór danych
+Do pracy domowej użyłem zbioru `airquality` dostępnego w R. Usunąłem z niego kolumny zawierające miesiąc i dzień pomiaru oraz wszystkie wiersze zawierające braki danych. Następnie wykonałem standaryzację wszystkich kolumn.
+```{r dane}
+data("airquality")
+
+airq <- airquality[,1:4] %>% na.omit() %>% scale()
+dim(airq)
+head(airq)
+```
+
+# Algorytmy
+W pracy będą sprawdzane dwa algorytmy klasteryzacji:
+
+* algorytm k-średnich (`kmeans()`)
+* algorytm k-medoidów (`cluster::pam()`)
+
+# Optymalna liczba grup
+Do ustalenia optymalnej liczby klastrów użyłem funkcji `fviz_nbclust` z pakietu `factoextra`.
+
+## Sylwetka
+```{r , echo=FALSE}
+fviz_nbclust(airq, kmeans, nstart=25, method = "silhouette") +
+  labs(subtitle = "Sylwetka dla kmeans")
+fviz_nbclust(airq, pam, method = "silhouette") +
+  labs(subtitle = "Sylwetka dla pam")
+```
+
+Na obydwu wykresach optymalna liczba klastrów to 2.
+
+## Metoda łokcia
+```{r, echo=FALSE}
+fviz_nbclust(airq, kmeans, nstart=25, method = "wss") +
+  labs(subtitle = "Metoda łokcia dla kmeans")
+fviz_nbclust(airq, pam, method = "wss") +
+  labs(subtitle = "Metoda łokcia dla pam")
+```
+
+Z wykresów można odczytać, że 3 jest optymalną liczbą grup.
+
+## Gap statistic
+```{r, echo=FALSE, cache=TRUE}
+set.seed(123)
+fviz_nbclust(airq, kmeans, nstart = 25,  method = "gap_stat", nboot = 500)+
+  labs(subtitle = "Gap statistic dla kmeans")
+fviz_nbclust(airq, pam, method = "gap_stat", nboot = 500)+
+  labs(subtitle = "Gap statistic dla pam")
+```
+
+Największa poprawa statystyki gap występuje dla 3 klastrów
+
+# Klasteryzacja
+
+## Algorytm k-średnich
+```{r}
+clust1 <- kmeans(airq,3, nstart = 25)
+
+plot(as.data.frame(airq[,]), col=clust1$cluster)
+```
+
+## Algorytm k-medoidów
+```{r}
+clust2 <- pam(airq,3)
+
+plot(as.data.frame(airq[,]), col=clust2$cluster)
+```
+
+
+# Porównanie centr klastrów
+Informacje o centrach klastrów są zawarte w obiektach zwróconych przez funkcje `kmenas` i `pam`
+```{r}
+clust1$centers
+clust2$medoids
+```
+
+Do wizualizacji użyłem funkcji `fviz_cluster` z pakietu `factoextra`.
+
+```{r, echo=FALSE}
+fviz_cluster(data=as.data.frame(airq),clust1, show.clust.cent = TRUE,geom = "point") + 
+  labs(subtitle = "Centra klastrów dla kmeans")
+
+fviz_cluster(data=as.data.frame(airq),clust2, show.clust.cent = TRUE, geom = "point") + 
+  labs(subtitle = "Centra klastrów dla pam")
+```
+
+Jak można zauważyć pozycje centrów różnią się dla obu algorytmów, ale nie są to duże różnice.
