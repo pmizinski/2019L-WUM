@@ -1,0 +1,348 @@
+---
+title: "PD 5"
+author: "Witold Merkel"
+date: "`r format(Sys.time(), '%d - %m - %Y')`"
+output:
+  html_document:
+    df_print: paged
+    toc: true
+    toc_float: true
+    code_folding: hide
+    number_sections: true
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(cluster)
+library(rattle)
+library(NbClust)
+library(factoextra)
+library(dplyr)
+library(dbscan)
+library(e1071)
+library(fpc)
+
+mydata <- USArrests %>%
+  na.omit() %>%         
+  scale()
+
+res.nbclust <- mydata %>%
+  scale() %>%
+  NbClust(distance = "euclidean",
+          min.nc = 2, max.nc = 10, 
+          method = "complete", index ="all") 
+```
+
+# Wprowadzenie
+
+Celem tego raportu jest zapoznanie się z dwoma modelami klasteryzacji: `kmeans` oraz `pam`.
+
+Oprócz modeli sprawdzimy różne statystyki dotyczące jakości klasteryzacji i dowiemy się czy według nich nasze modele działają poprawnie.
+
+# Dane
+
+Najpierw przyjżyjmy się danym. Zdecydowałem się używać zbioru `USArrests`.
+
+```{r}
+head(USArrests)
+```
+
+Zawarte w nim są dane dotyczące konkretnych zbrodni w poszczególnych stanach. Ramka danych na której pracuje jest skalowana, w celu polepszenia jakości klasteryzacji.
+
+# Liczba rozważanych klastrów
+
+Najpierw chciałbym sprawdzić jaka liczba klastrów jest oprymalna dla tego sbioru danych. Zrobie to przy pomocy algorytmu, który dla 30 modeli robi coś w stylu głosowania i zbiera wyniki, który model 'mówi' ile powinno być klastrów.
+
+```{r}
+fviz_nbclust(res.nbclust, ggtheme = theme_minimal())
+```
+
+Na powyższym wykresie jasno widać, że optymalna liczba klastrów to 2, ale możemy się jeszcze przyjżeć liczbom 3 i 4. Zatem zrobimy tak dla obu algorytmów.
+
+# kmeans
+
+Najpierw stowrzymy podział dla ustalonych wcześniej liczb klastrów przy pomocy `kmeans`, potem zwizualizujemy to za pomocą `PCA`, a następnie wyliczymy niektóre statystyki z artykułu.
+
+```{r}
+km2 <- eclust(mydata, "kmeans", k = 2, nstart = 25, graph = FALSE)
+km3 <- eclust(mydata, "kmeans", k = 3, nstart = 25, graph = FALSE)
+km4 <- eclust(mydata, "kmeans", k = 4, nstart = 25, graph = FALSE)
+```
+
+## PCA
+
+Sprawdźmy jak redukcja wymiarów wpłynie na nasze dane i zwizualizujmy to.
+
+### 2 klustry
+
+```{r}
+fviz_cluster(km2, geom = "point", ellipse.type = "norm",
+             palette = "jco", ggtheme = theme_minimal())
+```
+
+### 3 klustry
+
+```{r}
+fviz_cluster(km3, geom = "point", ellipse.type = "norm",
+             palette = "jco", ggtheme = theme_minimal())
+```
+
+### 4 klsutry
+
+```{r}
+fviz_cluster(km4, geom = "point", ellipse.type = "norm",
+             palette = "jco", ggtheme = theme_minimal())
+```
+
+### Podsumowanie
+
+Widać, że w każdym z tych przypadków, podział jest sensowny. Najlepiej to wygląda dla liczb 2 i 4, tak jak mogliśmy się tego spodziewać po poprzednich wynikach. Widać również, że wyjaśnialność pierwszej składowej jest na poziomie 62%, jest to całkiem dobry wynik.
+
+## Statystyki
+
+W tej sekcji przedstawimy kilka statystyk z artykułu.
+
+```{r}
+km2_stats <- cluster.stats(dist(mydata),  km2$cluster)
+km3_stats <- cluster.stats(dist(mydata),  km3$cluster)
+km4_stats <- cluster.stats(dist(mydata),  km4$cluster)
+```
+
+### Dunn
+
+Sprawdźmy index dunna dla klastrowania z różną liczbą klastrów. W przypadku tej statystyki im wyższa ona jest tym lepsze klastrowanie.
+
+#### 2
+
+```{r}
+km2_stats$dunn
+```
+
+#### 3
+
+```{r}
+km3_stats$dunn
+```
+
+#### 4
+
+```{r}
+km4_stats$dunn
+```
+
+### Entropia
+
+W tym wypadku mówimy o tym jak ciężkie jest klastrowanie, im entropia bliżej 0 tym jest cięższe.
+
+#### 2
+
+```{r}
+km2_stats$entropy
+```
+
+#### 3
+
+```{r}
+km3_stats$entropy
+```
+
+#### 4
+
+```{r}
+km4_stats$entropy
+```
+
+### Średnica
+
+Tu sprawdzimy średnica każdego klastra, im mniejsza tym lepiej.
+
+#### 2
+
+```{r}
+km2_stats$diameter
+```
+
+#### 3
+
+```{r}
+km3_stats$diameter
+```
+
+#### 4
+
+```{r}
+km4_stats$diameter
+```
+
+### Separacja
+
+Im większ separacja tym bardziej rozdzielne są klastry.
+
+#### 2
+
+```{r}
+km2_stats$separation
+```
+
+#### 3
+
+```{r}
+km3_stats$separation
+```
+
+#### 4
+
+```{r}
+km4_stats$separation
+```
+
+# pam
+
+Najpierw stowrzymy podział dla ustalonych wcześniej liczb klastrów przy pomocy `pam`, potem zwizualizujemy to za pomocą `PCA`, a następnie wyliczymy niektóre statystyki z artykułu.
+
+```{r}
+pam2 <- eclust(mydata, "pam", k = 2, graph = FALSE)
+pam3 <- eclust(mydata, "pam", k = 3, graph = FALSE)
+pam4 <- eclust(mydata, "pam", k = 4, graph = FALSE)
+```
+
+## PCA
+
+Sprawdźmy jak redukcja wymiarów wpłynie na nasze dane i zwizualizujmy to.
+
+### 2 klustry
+
+```{r}
+fviz_cluster(pam2, geom = "point", ellipse.type = "norm",
+             palette = "jco", ggtheme = theme_minimal())
+```
+
+### 3 klustry
+
+```{r}
+fviz_cluster(pam3, geom = "point", ellipse.type = "norm",
+             palette = "jco", ggtheme = theme_minimal())
+```
+
+### 4 klsutry
+
+```{r}
+fviz_cluster(pam4, geom = "point", ellipse.type = "norm",
+             palette = "jco", ggtheme = theme_minimal())
+```
+
+### Podsumowanie
+
+Widać, że w każdym z tych przypadków, podział jest sensowny. Najlepiej to wygląda dla liczb 2 i 4, tak jak mogliśmy się tego spodziewać po poprzednich wynikach. Widać również, że wyjaśnialność pierwszej składowej jest na poziomie 62%, jest to całkiem dobry wynik.
+
+## Statystyki
+
+W tej sekcji przedstawimy kilka statystyk z artykułu.
+
+```{r}
+pam2_stats <- cluster.stats(dist(mydata),  pam2$cluster)
+pam3_stats <- cluster.stats(dist(mydata),  pam3$cluster)
+pam4_stats <- cluster.stats(dist(mydata),  pam4$cluster)
+```
+
+### Dunn
+
+Sprawdźmy index dunna dla klastrowania z różną liczbą klastrów. W przypadku tej statystyki im wyższa ona jest tym lepsze klastrowanie.
+
+#### 2
+
+```{r}
+pam2_stats$dunn
+```
+
+#### 3
+
+```{r}
+pam3_stats$dunn
+```
+
+#### 4
+
+```{r}
+pam4_stats$dunn
+```
+
+### Entropia
+
+W tym wypadku mówimy o tym jak ciężkie jest klastrowanie, im entropia bliżej 0 tym jest cięższe.
+
+#### 2
+
+```{r}
+pam2_stats$entropy
+```
+
+#### 3
+
+```{r}
+pam3_stats$entropy
+```
+
+#### 4
+
+```{r}
+pam4_stats$entropy
+```
+
+### Średnica
+
+Tu sprawdzimy średnica każdego klastra, im mniejsza tym lepiej.
+
+#### 2
+
+```{r}
+pam2_stats$diameter
+```
+
+#### 3
+
+```{r}
+pam3_stats$diameter
+```
+
+#### 4
+
+```{r}
+pam4_stats$diameter
+```
+
+### Separacja
+
+Im większ separacja tym bardziej rozdzielne są klastry.
+
+#### 2
+
+```{r}
+pam2_stats$separation
+```
+
+#### 3
+
+```{r}
+pam3_stats$separation
+```
+
+#### 4
+
+```{r}
+pam4_stats$separation
+```
+
+# Wnioski
+
+Z wykresów `PCA` widzimy, że najlepiej to wygląda dla dwóch klastrów, potem statystyki pokazują to samo.
+
+Indeks Dunn'a, mówi nam o jakości klastrowania, im jest on wyższy tym lepiej nam poszło. W przypadku obu modeli okazał się, że pod tym względem najlepiej jest, gdy liczba klastrów to dwa.
+
+W przypadku `kmeans` entropia mówi, że najłatwiej jest robić dla dwóch klastrów, natomiast w przypadku `pam` pokazuje, że niekoniecznie co jest zadziwiające, bo inne statystyki mówią inaczej.
+
+Średnica mówi o tym jak rozległy jest konkretny klastr, jest to maksymalna odległość między dwoma punktami należącymi do tego samego. Widać, że im więcej ich jest tym średnica jest mniejsza, co jest raczej logiczne, widać również, że `kmeans` robi mniej rozległe klastry.
+
+Separacja mówi o rozdzielności klastrów względem siebie. Widzimy, że separacje są porównywalne względem liczby klastrów.
+
+Ostatecznie widać, że pomimo tego, że są to dwa różne modele to wcale nie dają innych wyników. Statystyki również są bardzo podobne dla tych samych przypadków.

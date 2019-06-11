@@ -1,0 +1,182 @@
+---
+title: "homework4"
+author: "Joanna Gajewska"
+date: "14 April 2019"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+Korzystając ze zboru danych apartments z pakietu DALEX oraz heloc (dotyczące scoringu bankowego) przetestuje skuteczność klasyfikatora svm jaką osiąga bez ustalenia parametrów oraz z ustawionymi parametrami, znalezionymi za pomocą random search.
+
+```{r cars}
+library(knitr)
+library(mlr)
+library(DALEX)
+set.seed(123)
+heloc_dataset_v1<-read.csv(file = "heloc_dataset_v1.csv")
+apartments_dataset <- apartments
+learner_apart <- makeLearner("regr.svm", predict.type = "response", par.vals = list(scale = FALSE))
+learner_heloc<- makeLearner("regr.svm", predict.type = "response", par.vals = list(scale = FALSE))
+cv <- makeResampleDesc("CV", iters = 5)
+
+
+```
+#heloc
+W pierwszej kolejności liczę RMSE, MAE dla obu zbiorów, bez ustalonych parametrów, bez skalowania (gdyż skalowanie jest domyślne).
+```{r , echo =FALSE, message=FALSE, warning=FALSE}
+heloc_no9 <- heloc_dataset_v1[heloc_dataset_v1$ExternalRiskEstimate != -9, ]
+heloc_ok<-heloc_no9
+
+head(apartments_dataset)
+for(colname in colnames(heloc_ok[-1])) {
+  heloc_ok[colname,] <- lapply(heloc_ok[colname, ], function(x) {as.numeric(as.character(x))})  
+}
+
+heloc_no9<-heloc_ok
+heloc_no9$RiskPerformance <- as.factor(ifelse(heloc_no9$RiskPerformance =="Good",1,0))
+#heloc_no9$RiskPerformance<-as.numeric(heloc_no9$RiskPerformance)
+heloc_no9$RiskPerformance<-as.numeric(heloc_no9$RiskPerformance)
+row.has.na <- apply(heloc_no9, 1, function(x){any(is.na(x))})
+heloc_no_na<- heloc_no9[!row.has.na,]
+heloc_no9<-heloc_no_na
+
+
+
+
+
+task_heloc <- makeRegrTask( data = heloc_no9, target = "RiskPerformance")
+
+r <- resample(learner_heloc, task_heloc, cv, measures=list(rmse, mae));
+
+scores_heloc<-data.frame( apart_without_parametrs=r$aggr)
+scores_heloc
+
+
+```
+
+#apartments
+```{r , echo =FALSE, message=FALSE, warning=FALSE}
+
+task_apartments <- makeRegrTask( data = apartments_dataset, target = "m2.price")
+
+r<- resample(learner_apart, task_apartments, cv, measures=list(rmse, mae))
+
+scores_apart<-data.frame( apart_without_parametrs=r$aggr)
+scores_apart
+
+
+
+```
+Jak widać otrzymane wyniki są można powiedzidziec - bezużyteczne.
+
+
+
+Kolejno, modyfikuje tak svm, by dawał lepsze wyniki, ustawiając wybrane parametry.
+```{r pressure, echo =FALSE, message=FALSE, warning=FALSE}
+
+
+
+param_set_svm <- makeParamSet(
+makeDiscreteParam("cost", values = 2^c(-8,-4,-2,0)), #cost parameters
+makeDiscreteParam("gamma", values = 2^c(-8,-4,0,4)) #RBF Kernel Parameter
+)
+random_control = makeTuneControlRandom(maxit = 50)
+
+
+
+
+```
+#heloc
+
+```{r , echo =FALSE, message=FALSE, warning=FALSE}
+
+
+heloc_tune<- tuneParams(learner_heloc, task = task_heloc, resampling = cv, par.set = param_set_svm, control =  random_control ,measures = list(rmse, mae))
+
+best_pars_heloc<- setHyperPars(learner_heloc, par.vals = heloc_tune$x)
+
+r<- resample(best_pars_heloc, task_heloc, cv,measures=list(rmse, mae))
+scores_heloc$apart_with_parametrs<-r$aggr
+scores_heloc
+
+```
+# apartments 
+```{r, echo =FALSE, message=FALSE, warning=FALSE}
+
+apart_tune<- tuneParams(learner_apart, task = task_apartments, resampling = cv, par.set = param_set_svm, control =  random_control ,measures = list(rmse, mae))
+
+best_pars_apart<- setHyperPars(learner_apart, par.vals = apart_tune$x)
+
+r<- resample(best_pars_apart, task_apartments, cv, measures=list(rmse, mae))
+
+scores_apart$apart_with_parametrs<-r$aggr
+scores_apart
+
+
+```
+
+Wyniki znacznie się poprawiły po ustawieniu parametrów wyszukanych za pomocą random search.
+
+
+W kolejnym kroku dodaje jeszcze jeden klasyfikator - random forest 
+
+```{r,echo =FALSE, message=FALSE, warning=FALSE}
+
+learner_rf <- makeLearner("regr.randomForest", predict.type = "response")
+
+custom_predict<-function(object, newdata)
+{pred <- predict(object, newdata=newdata)
+response <- pred$data$response
+return(response)}
+
+
+
+```
+
+
+W tej części korzystam z pakietu DALEX , by sprawdzić przewidywanie zmiennej dla danych klasyfikatorów 
+
+```{r , echo =FALSE, message=FALSE, warning=FALSE}
+
+apart <- mlr::train(learner_apart, task_apartments)
+apart_tune <- mlr::train(best_pars_apart, task_apartments)
+apart_rf <- mlr::train(learner_rf, task_apartments)
+
+class(apartments_dataset$construction.year)
+expl_apart <- explain(apart, data = apartments_dataset[,-1], predict_function = custom_predict,  y=apartments_dataset[,1], label="svm")
+expl_apart_tune <- explain(apart_tune, data = apartments_dataset[,-1], predict_function = custom_predict,  y=apartments_dataset[,1], label="tune_svm")
+expl_apart_rf <- explain(apart_rf, data = apartments_dataset[,-1], predict_function = custom_predict,  y=apartments_dataset[,1], label="rf")
+
+
+pdp_apart<-DALEX::single_variable(expl_apart ,variable = "construction.year",type = "pdp")
+pdp_apart_tune<-DALEX::single_variable(expl_apart_tune ,variable = "construction.year",type = "pdp")
+pdp_apart_rf<-DALEX::single_variable(expl_apart_rf, variable = "construction.year",type = "pdp")
+plot(pdp_apart, pdp_apart_rf, pdp_apart_tune)
+
+```
+
+
+```{r , echo =FALSE, message=FALSE, warning=FALSE}
+
+
+heloc<- mlr::train(learner_heloc, task_heloc)
+heloc_tune <- mlr::train(best_pars_heloc, task_heloc)
+heloc_rf <- mlr::train(learner_rf, task_heloc)
+
+expl_heloc <- explain(heloc, data = heloc_no9[,-1], predict_function = custom_predict,  y=heloc_no9[,1], label="svm")
+expl_heloc_tune <- explain(heloc_tune, data = heloc_no9[,-1], predict_function = custom_predict,  y=heloc_no9[,1], label="tune_svm")
+expl_heloc_rf <- explain(heloc_rf, data = heloc_no9[,-1], predict_function = custom_predict,  y=heloc_no9[,1], label="rf")
+
+
+pdp_heloc<-DALEX::single_variable (expl_heloc ,variable = "ExternalRiskEstimate",type = "pdp")
+pdp_heloc_tune<-DALEX::single_variable(expl_heloc_tune ,variable = "ExternalRiskEstimate",type = "pdp")
+pdp_heloc_rf<-DALEX::single_variable(expl_heloc_rf, variable = "ExternalRiskEstimate",type = "pdp")
+plot(pdp_heloc, pdp_heloc_tune,pdp_heloc_rf )
+
+
+```
+
+Jak widać, dla różnych przypadków w różnej mierze dana zmienna wpływa na predykcje.

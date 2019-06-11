@@ -1,0 +1,133 @@
+---
+title: "Praca domowa 5"
+author: "Michał Pastuszka"
+date: "`r format(Sys.time(), '%d - %m - %Y')`"
+output:
+  html_document:
+    df_print: paged
+    toc: true
+    toc_float: true
+    code_folding: hide
+    number_sections: true
+---
+
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, message=FALSE)
+library(mlr)
+library(rpart.plot)
+set.seed(42, "L'Ecuyer")
+parallelMap::parallelStartMulticore(3)
+titanic <- read.csv('titanic/train.csv')
+```
+
+# Wstęp
+
+W tym zadaniu przetestujemy działanie drzew decyzyjnych w zależności od wybranych hiperparametrów na przykładzie zbioru Titanic z Kaggle: https://www.kaggle.com/c/titanic/data
+
+```{r titanic}
+head(titanic)
+```
+
+Zaczniemy od usunięcia niepotrzebnych kolumn: "PassengerId", "Name", "Ticket", "Cabin".
+
+```{r clean}
+titanicClean <- titanic[,!colnames(titanic)%in%c("PassengerId", "Name", "Ticket", "Cabin")]
+```
+
+Zajmować będziemy się parametrami:
+
+* cp - complexity: zabrania tworzenie podziałów, które zwiększyłyby miarę R-squared o mniej niż jego wartość
+* maxdepth - maksymalna głębokość drzewa
+* minbucket - minimalna liczba obserwacji w liściu
+* minsplit - minimalna liczba obserwacji dla której można dokonać podziału node'a
+
+# Porównanie
+
+Porównania będziemy dokonywać na ustalonym podziale danych, korzystając z miary AUC.
+
+```{r task}
+trainTestSplit <- sample(nrow(titanicClean), size = nrow(titanicClean)*0.7)
+trainSet <- titanicClean[trainTestSplit,]
+testSet <- titanicClean[-trainTestSplit,]
+trainTask <- makeClassifTask("Titanic", trainSet, "Survived")
+testTask <- makeClassifTask("Titanic", testSet, "Survived")
+```
+
+## Domyślne parametry
+
+Zaczniemy od utworzenia drzewa korzystając z domyślnych parametrów w pakiecie: cp = 0.01, maxdepth = 30, minbucket = 7, minsplit = 20.
+
+```{r def}
+learner <- makeLearner("classif.rpart", predict.type = "prob")
+trained <- train(learner, trainTask)
+prediction <- predict(trained, testTask)
+ROCmeasures <- calculateROCMeasures(prediction)
+measureAUC(prediction$data$prob.1, truth = prediction$data$truth, positive = "1")
+```
+
+## Proponowane parametry
+
+Teraz przetestujemy parametry proponowane w artykule "Tunability: Importance of Hyperparameters of Machine Learning Algorithms" ( https://arxiv.org/pdf/1802.09596.pdf ): cp = 0, maxdepth = 21, minbucket = 12, minsplit = 24
+
+```{r prop}
+learnerPr <- makeLearner("classif.rpart", predict.type = "prob", par.vals = list(cp = 0, maxdepth = 21, minbucket = 12, minsplit = 24))
+trainedPr <- train(learnerPr, trainTask)
+predictionPr <- predict(trainedPr, testTask)
+measureAUC(predictionPr$data$prob.1, truth = predictionPr$data$truth, positive = "1")
+```
+
+Okazuje się, że otrzymaliśmy znaczną poprawę wyniku w stosunku do parametrów proponowanych przez twórców pakietu.
+
+## Wyszukiwanie losowe
+
+Spróbujemy teraz dobrać do naszego zbioru optymalne parametry metodą random search wykonując 1000 iteracji.
+
+```{r random, cache=TRUE}
+learnerRa <- makeLearner("classif.rpart", predict.type = "prob")
+
+tunedParams <- tuneParams(learner = learner,
+                       task = trainTask, resampling = makeResampleDesc("CV", iters = 5),
+                       measures = list(auc), control = makeTuneControlRandom(maxit = 1000),
+                       par.set = makeParamSet(
+                         makeNumericParam("cp", lower=0, upper=1),
+                         makeIntegerParam("maxdepth", lower=1, upper=30),
+                         makeIntegerParam("minbucket", lower=1, upper=60),
+                         makeIntegerParam("minsplit", lower=1, upper=60)))
+print(tunedParams)
+learnerRa <- setHyperPars(learnerRa, par.vals = tunedParams$x)
+trainedRa <- train(learnerRa, trainTask)
+predictionRa <- predict(trainedRa, testTask)
+measureAUC(predictionRa$data$prob.1, truth = predictionRa$data$truth, positive = "1")
+```
+
+Okazuje się, że znalezione parametry wypadły gorzej niż oba poprzednie proponowane ustawienia. Najlepszymi okazały się więc parametry proponowane w artykule.
+
+## Conditional Inference Trees
+
+Porównamy wyniki dla tradycjnych drzew z drzewem typu Conditional Inference z pakietu `partykit`, korzystając z domyślnych parametrów.
+
+```{r ctree}
+learnerCt <- makeLearner("classif.ctree", predict.type = "prob")
+trainedCt <- train(learnerCt, trainTask)
+predictionCt <- predict(trainedCt, testTask)
+measureAUC(predictionCt$data$prob.1, truth = predictionCt$data$truth, positive = "1")
+```
+
+Okazuje się, że drzewo tego typu sprawdziło się znacznie lepiej niż poprzednie.
+
+# Wynikowe drzewo
+
+Narysujemy teraz najlepsze utworzone drzewo decyzyjne `rpart`, korzystające z proponowanych w artykule parametrów:
+
+```{r plot}
+rpart.plot(trainedPr$learner.model, roundint = FALSE)
+```
+
+Oraz drzewo `ctree`:
+
+```{r plot2}
+plot(trainedCt$learner.model)
+```
+
+Możemy zauważyć, że drugie drzewo jest znacznie płytsze niż pierwsze. Poza tym, pierwsze drzewo posiada bardzo wiele podziałów opartych o zmienne `Fare` i `Age`, podczas gdy w drugim pojawiają się one tylko po razie.

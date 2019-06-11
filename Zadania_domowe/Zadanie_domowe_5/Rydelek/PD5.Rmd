@@ -1,0 +1,155 @@
+---
+title: "Raport"
+author: "Adam Rydelek"
+date: "26 kwietnia 2019"
+output:
+  html_document:
+    df_print: paged
+    toc: true
+    toc_float: true
+    code_folding: hide
+    number_sections: true
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+# Wprowadzenie
+
+Zajmę się zadaniem dopasowania modelu drzewa decyzyjnego do zbioru danych **titanic** z pakietu `DALEX`. Modelem, który będę stosował będzie `rpart`, na którym porównam parametry domyślne z parametrami optymalnymi według artykułu, oraz parametrami znalezionymi metodą Random Search.
+
+# Porównanie wyników
+
+Na początek stworzę trzy modele z opisanymi powyżej parametrami.
+
+## Stworzenie modeli
+
+```{r cars, warning=FALSE, message= FALSE, error=FALSE}
+library(DALEX)
+library(mlr)
+library(stablelearner)
+library(ggplot2)
+library(dplyr)
+library(rpart.plot)
+set.seed(123, "L'Ecuyer")
+data("titanic")
+
+titan <- select(titanic,-name)
+smp_size <- floor(0.75 * nrow(titan))
+
+train_ind <- sample(seq_len(nrow(titan)), size = smp_size)
+
+titan <- data.frame(titan)
+titan[sapply(titan, is.character)] <- lapply(titan[sapply(titan, is.character)], 
+                                       as.factor)
+train <- titan[train_ind, ]
+test <- titan[-train_ind, ]
+
+classif_tsk <- makeClassifTask(id="1", data=titan, target='survived')
+classif_lrn1 <- makeLearner(id="Optimal", cl = "classif.rpart", predict.type="prob", par.vals = list(cp=0, maxdepth=21, minbucket = 12, minsplit = 24))
+classif_lrn2 <- makeLearner(id="Stock", cl = "classif.rpart", predict.type="prob")
+
+ps = makeParamSet(
+  makeNumericParam("cp", lower = 0, upper = 1),
+  makeIntegerParam("maxdepth", lower = 1, upper = 30),
+  makeIntegerParam("minbucket", lower = 1, upper = 60),
+  makeIntegerParam("minsplit", lower = 1, upper = 60)
+)
+cv <- makeResampleDesc("CV", iters = 3)
+classif_tsk2 <- makeClassifTask(id="2", data=train, target= "survived")
+ctrlRand = makeTuneControlRandom(maxit = 2000L)
+res1a = tuneParams(classif_lrn2, task = classif_tsk2, resampling = cv,
+                   par.set = ps, control = ctrlRand, measures = list(auc,acc,brier))
+
+classif_lrn3 <- makeLearner(id="Random", cl="classif.rpart", predict.type="prob", par.vals = res1a$x)
+
+bmr <- benchmark(learners = list(classif_lrn1,classif_lrn2,classif_lrn3), tasks = classif_tsk, resamplings = cv, measures = list(auc,acc,brier))
+```
+
+```{r}
+bmr
+```
+
+Jak widać po wynikach optymalne parametry opisane w artykule okazały się być najlepszymi, drugie w kolejce były parametry wyszukane za pomocą **Random Search** z liczbą iteracji równą 2000, a najgorsze były parametry domyślne.
+
+## Wizualizacja wyników
+
+```{r}
+
+plotBMRBoxplots(bmr, measure = auc, pretty.names = FALSE, style = "violin", 
+  order.lrn = getBMRLearnerIds(bmr)) +
+  aes(color = learner.id) +
+  theme(strip.text.x = element_text(size = 8))
+
+```
+
+Z powyższego wykresu widać jasno różnicę w błędach, z czego można wyciągnąć wniosek, jak istotny jest odpowiedni dobór parametrów do modelu.
+
+## Wizualizacja drzewa
+
+Teraz przekonamy się jak wygląda najlepsze otrzymane drzewo.
+
+```{r, warning=FALSE,error=FALSE,message=FALSE}
+stockT<-mlr::train(classif_lrn2,classif_tsk)
+optimalT <- mlr::train(classif_lrn1,classif_tsk)
+randomT <- mlr::train(classif_lrn3, classif_tsk)
+
+
+```
+
+```{r, warning=FALSE,error=FALSE,message=FALSE}
+rpart.plot(optimalT$learner.model)
+```
+
+Z rysunku drzewa można zauważyć, że jest dość skomplikowane i ma wiele rozgałęzień, przez co ciężko odczytać, jaki kryteria wykorzystywał model do podejmowania decyzyji. Z tego powodu przeanalizujemy teraz drzewo z domyślnymi parametrami.
+
+```{r, warning=FALSE,error=FALSE,message=FALSE}
+rpart.plot(stockT$learner.model)
+```
+
+Tym razem dokłądnie widać, które cechy były najbardziej istotne do podziału. Można zauważyć już w pierwszym rozgałęzieniu, jak bardzo istotna jest płeć. Widać również sporą różnicę przy podziale wieku na mniejszy od 9.5 i większy od 55. Można również zauważyć istotę klasy, którą podróżował pasażer.
+
+## Wizualizacja różnicy kryterium podziału
+
+Teraz sprawdzimy jak bardzo różnie będą wyglądały drzewa, które przyjmują za swoje kryterium podziału maksymalizację odpowiednio **Information Gain** i indeksu **Gini**. Testy będziemy wykonywać również na drzewach z resztę parametrów domyślną, a by można było dokładniej przeanalizować przebieg decyzji.
+
+### Information Gain
+```{r, warning=FALSE,error=FALSE,message=FALSE}
+classif_lrn1a <- makeLearner(id="Information Gain", cl = "classif.rpart", predict.type="prob", par.vals = list( parms = list(split = 'information')))
+classif_lrn1b <- makeLearner(id="Gini Index", cl = "classif.rpart", predict.type="prob", par.vals = list( parms = list(split = 'gini')))
+optimalTa <- mlr::train(classif_lrn1a,classif_tsk)
+optimalTb <- mlr::train(classif_lrn1b,classif_tsk)
+
+
+```
+
+```{r, warning=FALSE,error=FALSE,message=FALSE}
+rpart.plot(optimalTa$learner.model)
+```
+
+### Gini Index
+
+```{r, warning=FALSE,error=FALSE,message=FALSE}
+rpart.plot(optimalTb$learner.model)
+
+```
+
+Można zauważyć, że do trzeciego poziomu rozgałęzień oba drzewa działają identycznie. Potem jednak drzewo oparte na Information Gain ma trochę inną lewą odnogę, w której zostało dodane dodatkowe rozgałęzienie określające kraj pochodzenia osób. Drzewo oparte na Information Gain okazało się więc bardziej skomplikowane, jednak czy również bardziej efektywne?
+
+```{r, message=FALSE, error=FALSE, warning=FALSE}
+bmr2 <- benchmark(learners = list(classif_lrn1a,classif_lrn1b), tasks = classif_tsk, resamplings = cv, measures = list(auc,acc,brier))
+```
+
+```{r}
+bmr2
+```
+
+Można zauważyć jednak, że AUC okazało się lepsze dla "prostszego" drzewa opartego o Gini Index.
+
+# Podsumowanie
+
+Podsumowując widać, jak bardzo istotny okazał się tuning parametrów w przypadku drzew decyzyjnych. Najlepsze okazały się parametry z artykułu, chociaż udało się do nich zbliżyć za pomocą Random Search'a na odpowiednim przedziale. Rysunki drzew pokazały, jak bardzo łatwe do wytłumaczenie są tego rodzaju modele, co jest ostatnimi czasy istotne. Można również zauważyć, że pomimo podobnej struktury drzewa sama zmiana kryterium podziału zmienia jego odpowiedź i wyniki.
+
+
+
