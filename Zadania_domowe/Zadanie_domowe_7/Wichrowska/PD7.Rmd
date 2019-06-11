@@ -1,0 +1,152 @@
+---
+title: "Praca Domowa 7"
+author: "Aleksandra Wichrowska"
+date: "10 czerwca 2019"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE)
+library(factoextra)
+library(stats)
+library(cluster)
+```
+
+## Wstęp
+
+W tym zadaniu domowym dokonam analizy i porównania dwóch algorytmów klasteryzacyjnych - k-średnich oraz k-medoidów.
+Testy będę przeprowadzała na powszechnie znanym zbiorze danych `iris`.
+
+Domyślnie etykiety zbioru są podzielone na trzy grupy, sprawdzimy, jaka liczba klastrów okaże się najbardziej optymalna według różnych metryk dla tych algorytmów.
+Testy będę przeprowadzała na liczbie klastrów z zakresu 2-8.
+
+Wykorzystam funkcje zaimplementowane w R:
+
+- `kmeans` z pakietu `stats`
+- `pam`  pakieru `cluster`
+
+## Wybór liczby klastrów
+
+Optymalną liczbę klastrów wybierzemy na podstawie metod omówionych podczas zajęć:
+
+- silhouette method
+- elbow plot
+- gap statistic
+
+```{r dane}
+data <-iris[1:4]
+label <- iris[5]
+label <- as.integer(ifelse(label == 'versicolor',1, ifelse(label == 'setosa', 2,3)))
+n <- 2:8
+```
+
+```{r kmeans}
+kmeans_model <- lapply(n, function(x){ kmeans(data, x) })
+kmeans_clusters <- lapply(kmeans_model, function(x){ x$cluster })
+kmeans_tot.withinss <- unlist(lapply(kmeans_model, function(x){ x$tot.withinss }))
+kmeans_centroids <- lapply(kmeans_model, function(x){ x$centers })
+```
+
+```{r pam_plot}
+pam_model <- lapply(n, function(x) {pam(data, x)})
+pam_clusters <- lapply(pam_model, function(x) {x$clustering})
+pam_centroids <- lapply(pam_model, function(x) {x$centroids})
+```
+
+```{r , echo=FALSE}
+fviz_nbclust(data, kmeans, nstart=25, method = "silhouette") +
+  labs(subtitle = "Silhouette - kmeans", title="")
+fviz_nbclust(data, pam, method = "silhouette") +
+  labs(subtitle = "Silhouette - pam", title="")
+```
+
+Optymalna liczba klastrów, to ta która maksymalizuje współczynnik `silhouette`, czyli zarówno dla algorytmu k-średnich, jak i k-medoidów to dwa klastry.
+
+```{r, echo=FALSE}
+fviz_nbclust(data, kmeans, method = "wss", verbose = FALSE) +
+  labs(subtitle = "Elbow method", title="")
+fviz_nbclust(data, pam, method = "wss", verbose=FALSE) +
+  labs(subtitle = "Elbow plot - pam", title="")
+```
+
+Z `elbow plot` dla obu algorytmu odczytujemy optymalną liczbę klastru jako 2 lub 3.
+
+```{r, echo=FALSE, cache=TRUE}
+set.seed(123)
+fviz_nbclust(data, kmeans, nstart = 25,  method = "gap_stat", nboot = 500)+
+  labs(subtitle = "Gap statistic - kmeans", title="")
+fviz_nbclust(data, pam, method = "gap_stat", nboot = 500)+
+  labs(subtitle = "Gap statistic - pam", title="")
+```
+
+Z `gap statistic` wynika, że optymalna liczba klastrów dla algorytmu k-średnich to 6, a dla k-medoidów 4.
+
+# Klasteryzacja
+
+W dalszych rozważaniach będziemy przeprowadzać testy dla 2 i 3 klastrów.
+
+## Dla dwóch klastrów
+
+### Algorytm k-średnich
+```{r}
+kmeans_model_optimal2 <- kmeans(data, 2, nstart = 25)
+fviz_cluster(kmeans_model_optimal2,data)
+```
+
+
+### Algorytm k-medoidów
+```{r}
+pam_model_optimal2 <- pam(data,2)
+fviz_cluster(pam_model_optimal2,data)
+```
+
+
+## Dla trzech klastrów
+
+### Algorytm k-średnich
+```{r}
+kmeans_model_optimal3 <- kmeans(data, 3, nstart = 25)
+fviz_cluster(kmeans_model_optimal3,data)
+```
+
+### Algorytm k-medoidów
+```{r}
+pam_model_optimal3 <- pam(data,3)
+fviz_cluster(pam_model_optimal3,data)
+```
+
+Jak widać na wizualizacjach, oba algorytmy dzielą na klastry w niemalże identyczny sposób.
+
+# Centra klastrów
+Centra klastrów możemy znaleźć w obiektach zwracanych przez funkcje `kmeans` i `pam`
+
+## Porównanie dla dwóch klastrów
+```{r}
+kmeans_model_optimal2$centers
+pam_model_optimal2$medoids
+```
+
+```{r, echo=FALSE}
+fviz_cluster(data=as.data.frame(data),kmeans_model_optimal2, show.clust.cent = TRUE,geom = "point") + 
+  labs(subtitle = "Centra klastrów dla k-średnich")
+fviz_cluster(data=as.data.frame(data),pam_model_optimal2, show.clust.cent = TRUE, geom = "point") + 
+  labs(subtitle = "Centra klastrów dla k-medoidów")
+```
+
+```{r}
+kmeans_model_optimal3$centers
+pam_model_optimal3$medoids
+```
+
+```{r, echo=FALSE}
+fviz_cluster(data=as.data.frame(data),kmeans_model_optimal3, show.clust.cent = TRUE,geom = "point") + 
+  labs(subtitle = "Centra klastrów dla k-średnich")
+fviz_cluster(data=as.data.frame(data),pam_model_optimal3, show.clust.cent = TRUE, geom = "point") + 
+  labs(subtitle = "Centra klastrów dla k-medoidów")
+```
+
+Również centra klastrów są w zbliżonych miejsach.
+
+# Zbieżność
+Implementacja metody k-medoidów, z której korzystam nie zwraca liczby iteracji, więc nie jestem w stanie zbadać i porównać szybkości zbieżności tych metod.
+
