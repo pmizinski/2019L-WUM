@@ -1,0 +1,187 @@
+---
+title: "praca domowa 7"
+author: "Joanna Gajewska"
+date: "11 June 2019"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+#Wstęp
+
+W zadaniu będę wyznaczać najlepszą liczbę klastrów dla metod k-średnich i k-mediów
+
+W pierwszej kolejności krótko opiszę powyższe metody 
+
+###Metoda k-średnich
+Celem tej metody jest podział zbioru danych na k klastrów. Dobry podział to taki,
+w którym suma odległości obserwacji należących do klastra jest znacznie mniejsza
+od sumy odległości obserwacji pomiędzy klastrami. Metoda k-średnich polega na
+wyznaczeniu współrzędnych k punktów, które zostaną uznane za środki klastrów.
+Obserwacja będzie należała do tego klastra, którego środek jest najbliżej niej.
+
+
+### Metoda k-mediów (metoda grupowania wokół centroidów - PAM Partitioning Around Medoid)
+Metoda PAM działa na podobnej zasadzie jak k-średnich, z tą różnicą, że środkami klastrów są obserwacje ze zbioru danych. W metodzie PAM zbiór możliwych środków klastrów jest więc znacznie
+mniejszy, niż w metodzie k-średnich.
+
+
+Do wyznaczenia najlepszej liczby klastrów będę korzsytać z biblioteki factoextra, która pozwala na wykreślenie  wykresu z otymalną ilością klastrów jak i 
+wizaualizacje klasteryzacji dla najlepszego podziału.
+
+
+####Metody jakie będę stostować do oszacowania optymalnej ilości klastrów to:
+
+* metoda sylwetki -określa, jak dobrze każdy obiekt leży w swoim klastrze. Metoda średniej sylwetki oblicza średnią sylwetkę obserwacji dla różnych wartości k . Optymalna liczba klastrów k to ta, która maksymalizuje średnią sylwetkę w zakresie możliwych wartości dla k 
+
+* metoda łokcia -  Całkowita suma kwadratowa w klastrze (wss) mierzy zwartość klastra i chcemy, aby była jak najmniejsza
+
+* metoda statystyki luki -  porównuje całkowitą zmienność wewnątrzklastra dla różnych wartości k z ich oczekiwanymi wartościami w zerowym rozkładzie odniesienia danych (tj. rozkład bez oczywistego grupowania). Zestaw danych referencyjnych jest generowany przy użyciu symulacji Monte Carlo procesu próbkowania.
+
+
+Zbiór danych na jakim będę przeprowadzać klasteryzacje dotyczy rodzai win. Zawiera on 13 atrybutów + atrybut określający przynależność do danej klasy. Pierwotnie zbiór jest podzielony na 3 podzbiory. 
+
+
+```{r,  echo=FALSE, message=FALSE, warning=FALSE}
+library(cluster)
+library(factoextra)
+library(dplyr)
+library(mlr)
+
+set.seed(123)
+#data<-scale(iris[,-5])
+
+rm(list=ls())
+wina<-read.table("https://archive.ics.uci.edu/ml/machine-learning-databases/wine/wine.data", sep =",");
+
+colnames(wina)<-c("Klasa", "Alkohol", "Kwas_jabłkowy", "Popiol", "Alkaicznosc_popiolu", "Magnez","Calkowite_fenole", "Flawonoidy", "Nonflawanoidowe_fenole", "Proantocyjany", "Intensywnosc_koloru", "Odcien",  "Rozcienczenie_win", "Prolina" );
+
+summarizeColumns(wina)
+data<-scale(wina[,-1])
+
+
+
+
+
+```
+
+
+
+###K-średnich
+
+####Metoda sylwetki
+
+```{r,  echo=FALSE, message=FALSE, warning=FALSE}
+
+fviz_nbclust(data, kmeans, method = "silhouette")
+
+```
+
+
+
+####Metoda łokcia
+
+```{r,  echo=FALSE, message=FALSE, warning=FALSE}
+fviz_nbclust(data, kmeans, method = "wss") +
+geom_vline(xintercept = 3, linetype = 2)
+
+```
+
+
+#### Metoda statystyki luki
+
+```{r,  echo=FALSE, message=FALSE, warning=FALSE}
+gap_stat <- clusGap(data, FUN = kmeans, nstart = 25, K.max = 10, B = 10)
+
+fviz_gap_stat(gap_stat)
+```
+
+Jak widać na powyższych wykresach, dla metody k-średnich wszystkie meody wyznaczania optymalnej liczby klastrów dają ten sam rezultat - podział na 3 grupy. Jest on jak najbardziej prawidłowy, gdyż pierwotny zbiór również jest sklasyfikowany na tyle podzbiorów.
+
+#K-mediów
+
+
+####Metoda sylwetki
+```{r,  echo=FALSE, message=FALSE, warning=FALSE}
+fviz_nbclust(data, pam, method = "silhouette")
+
+```
+
+
+####Metoda łokcia
+
+
+```{r,  echo=FALSE, message=FALSE, warning=FALSE}
+fviz_nbclust(data, pam, method = "wss") +
+geom_vline(xintercept = 3, linetype = 2)
+
+```
+
+####Metoda statystyki luki
+
+
+```{r,  echo=FALSE, message=FALSE, warning=FALSE}
+gap_stat <- clusGap(data, FUN = pam, K.max = 10, B = 10)
+
+fviz_gap_stat(gap_stat)
+```
+
+
+w przypadku metody k-mediów efekty są niemal identyczne. Ksztalt wykresów względem tych wykreślonych dla k-średnich prawie niczym się nie różni. Oczywiście liczba klastrów wyznaczona dla metody k-mediów jest taka sama jak w poprzednim przypadku- 3 grupy to najbardziej optymalny podział.
+
+
+
+## Klastry dla ich optymalnej liczby 
+
+
+```{r,  echo=FALSE, message=FALSE, warning=FALSE}
+
+kmenas_3<-kmeans(data, 3)
+pam_3<-pam(data, 3)
+
+fviz_cluster(kmenas_3, data = data,
+             palette = c("#2E9FDF", "#E7B800", "#FC4E07"),
+             ggtheme = theme_minimal(),
+             main = "Partitioning Clustering Plot - kmeans"
+             )
+
+fviz_cluster(pam_3, data = data,
+             palette = c("#2E9FDF", "#E7B800", "#FC4E07"),
+             ggtheme = theme_minimal(),
+             main = "Partitioning Clustering Plot - PAM"
+             )
+
+
+
+
+
+
+```
+
+
+Jak widać na powyższych dwóch wizualizacjach grupowanie obserwacji jest podobne dla k-średnich i k-mediów. Występują jednak pewne różnice. Jeden z klastrów dla metody k - mediów jest nieco bardziej "obszerny " niż ten odpowiadający drugiej metodzie.
+ 
+#Centra klastów
+## k-średnich
+
+```{r,  echo=FALSE, message=FALSE, warning=FALSE}
+
+kmenas_3$centers
+```
+
+
+## k-mediów
+
+```{r,  echo=FALSE, message=FALSE, warning=FALSE}
+pam_3$medoids
+
+```
+
+Jak widać centra dla większości atrybutów są zbliżone dla obu metod. Jednak już z wizualizacji podziału na grupy widać, że jeden podzbiór jest nieco inaczej zdefiniowany w obu przypdkach. Z tego też wynikają większe różnice w wyznaczeniu centrów odpowiadające tym dwum klastrom.
+
+
+
+
+
