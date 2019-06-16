@@ -1,0 +1,117 @@
+---
+title: "Praca domowa 7"
+author: "Michał Pastuszka"
+date: "`r format(Sys.time(), '%d - %m - %Y')`"
+output:
+  html_document:
+    df_print: paged
+    toc: true
+    toc_float: true
+    code_folding: hide
+    number_sections: true
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE)
+library(stats)
+library(kmed)
+library(fpc)
+library(ggplot2)
+library(ggfortify)
+library(microbenchmark)
+dane <- scale(iris[,-5])
+diss <- dist(dane)
+etykiety <- iris[,5]
+```
+
+# Wstęp
+
+Będziemy porównywać algorytmy k średnich i k medioidów na zbiorze danych iris. Wykorzystamy implementacje `kmeans` z pakietu `stats` i `fastkmed` z pakietu `kmed`.
+
+# Optymalne liczby klastrów
+
+Do wyznaczenia optymalnej liczby klastrów wykorzystamy statystyki within.cluster.ss, dunn2, pearsongamma i avg.silwidth z pakietu `fpc`.
+
+```{r nclusters}
+kmeansList <- list()
+kmedsList <- list()
+for(i in 2:6){
+  kmeansList[[i]] <- kmeans(dane, i)
+  kmedsList[[i]] <- fastkmed(diss, i)
+}
+
+nazwy <- c("within.cluster.ss", "dunn2", "pearsongamma", "avg.silwidth")
+statystyki <- data.frame('algorytm' = factor(40, levels = c("kmeans", "kmeds")), 'statystyka' = factor(40, levels = nazwy), 'wartosc' = double(40), 'nklastrow' = integer(40))
+
+
+j = 1
+for(i in 2:6){
+  statKmeans <- cluster.stats(diss, kmeansList[[i]]$cluster)
+  statKmeds <- cluster.stats(diss, kmedsList[[i]]$cluster)
+  for(n in nazwy){
+    statystyki[j,] <- c("kmeans", n, statKmeans[[n]], i)
+  j = j+1
+    statystyki[j,] <- c("kmeds", n, statKmeds[[n]], i)
+  j = j+1
+  }
+}
+statystyki$wartosc <- as.numeric(statystyki$wartosc)
+ggplot(statystyki, aes(x = nklastrow, y = wartosc, colour = algorytm, group = algorytm)) + facet_wrap(~statystyka, scales = "free_y") + geom_path() + labs(title = "Statystyki porównawcze dla różnej liczby klastrów", x = "liczba klastrów", y = "wartość")
+```
+
+Statystyki wskazują na 2 lub 3, jako optymalną liczbę klastrów. Oba algorytmy otrzymują wtedy identyczne wyniki. Wynika to z faktu, że w zbiorze jeden z gatunków irysów wyraźnie odstaje od pozostałych i tworzy oddzielną grupę. Dla większych wartości lepsze wyniki uzyskuje algorytm kmeds.
+
+# Porównanie klastrów
+
+Porównamy teraz otrzymane wyniki dla dwóch i trzech klastrów. W drugim przypadku wykorzystamy oryginalne etykiety jako punkt odniesienia.
+
+```{r comp2, warning=FALSE}
+pca <- prcomp(dane)
+kmeans_2 <- kmeansList[[2]]$cluster
+kmeds_2 <- kmedsList[[2]]$cluster
+kmeds_3 <- kmedsList[[3]]$cluster
+kmeans_3 <- kmeansList[[3]]$cluster
+
+autoplot(pca, colour = kmeans_2)
+autoplot(pca, colour = kmeds_2)
+```
+
+```{r comp3, warning = FALSE}
+autoplot(pca, iris, colour = "Species")
+autoplot(pca, colour = kmeans_3)
+autoplot(pca, colour = kmeds_3)
+```
+
+Widzimy, że różnice w podziałach stworzonych przez oba algorytmy są nieznaczne i ograniczają się do kilku granicznych punktów. Przypominają one rzeczywisty podział obserwacji, jednak różnią się od niego w pobiżu podziału międy odmianami versicolor i virginica, gdyż nie jest on tak regularny.
+
+# Centra klastrów
+
+Porównamy centra klastrów wyznaczonych przez algorytmu. Są one główną różnicą między algorytmami, gdyż kmeds jako centrum klastra zawsze wybiera rzeczywistą obserwację ze zbioru.
+
+```{r centra2, warning = FALSE}
+centers <- kmeansList[[2]]$centers%*%pca$rotation
+medioids <- pca$x[kmedsList[[2]]$medoid,]
+ggplot(pca$x, aes(x = PC1, y = PC2)) + geom_point() + geom_point(data = centers, aes(x = PC1, y = PC2, colour = "red"), shape = 15, size = 3, alpha = 0.5) + geom_point(data = medioids, aes(x = PC1, y = PC2, colour = "blue"), shape = 15, size = 3, alpha = 0.5) + 
+  scale_colour_manual(name = "centra", values = c('blue' = 'blue', 'red' = 'red'),  labels = c('kmed', 'kmeans')) +
+  ggtitle("Centra klastrów")
+```
+
+```{r centra3, warning = FALSE}
+centers <- kmeansList[[3]]$centers%*%pca$rotation
+medioids <- pca$x[kmedsList[[3]]$medoid,]
+ggplot(pca$x, aes(x = PC1, y = PC2)) + geom_point() + geom_point(data = centers, aes(x = PC1, y = PC2, colour = "red"), shape = 15, size = 3, alpha = 0.5) + geom_point(data = medioids, aes(x = PC1, y = PC2, colour = "blue"), shape = 15, size = 3, alpha = 0.5) + 
+  scale_colour_manual(name = "centra", values = c('blue' = 'blue', 'red' = 'red'),  labels = c('kmed', 'kmeans')) +
+  ggtitle("Centra klastrów")
+```
+Widzimy, że centra znajdują się dość blisko siebie. Największą różnicę widać przy podziale na 3 klastry, w punktach odpowiadających odmianie versicolor. Algorytm k średnich jako centrum wskazał punkt będący zauważalnie oddalonym od istniejących obserwacji.
+
+# Czas wykonywania
+
+Ponieważ wykorzystana implementacja algorytmu k medioidów nie zwraca liczby wykonanych iteracji, jesteśmy zmuszeni ograniczyć się do czasu wykonania algorytmu.
+
+```{r czas}
+bench <- microbenchmark(kmeans = kmeans(dane, i), kmed = fastkmed(diss, i))
+print(bench)
+```
+
+Z wyników widać, że implementacja algorytmu k medioidów pomimo nazwy jest znacznie wolniejsza od k średnich.

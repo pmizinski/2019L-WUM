@@ -1,0 +1,144 @@
+---
+title: "WUM PD 6"
+author: "Bartłomiej Granat"
+date: "`r format(Sys.time(), '%d - %m - %Y')`"
+output:
+  html_document:
+    dane_print: paged
+    toc: true
+    toc_float: true
+    code_folding: hide
+    number_sections: true
+---
+  
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, cache = TRUE, warning = FALSE)
+library(OpenML)
+library(cluster)
+library(factoextra)
+library(clValid)
+library(NbClust)
+library(ggplot2)
+library(gridExtra)
+library(ClusterR)
+
+zoo <- getOMLDataSet(data.id = 62L)
+zoo <- zoo$data
+df <- zoo[-26,]
+animals <- df$animal
+rownames(df) <- animals
+df <- df[,-1]
+df_clus <- df[,-17]
+df_clus <- as.data.frame(ifelse(df_clus == "true",1,0))
+df_clus$legs <- df$legs
+df_clus <- as.data.frame(scale(df_clus))
+```
+
+# Wstęp
+
+Poniższy raport przedstawia wyniki badania klasteryzacji przy pomocy różnych indeksów zawartych w artykule: https://www.researchgate.net/publication/2500099_On_Clustering_Validation_Techniques oraz przedstawionych na wykładach.
+Indeksy, które wykorzystam to:
+
+internal:
+
+- Dunn
+
+- Silhouette
+
+- Connectivity
+
+- Gap statistics
+
+- WSS
+
+external:
+
+- Jaccard
+
+Algorytmy, które będę stosował to wyjaśnione w artykule $KMeans$ oraz $PAM$.
+
+Zbiór, na którym będę działał to $zoo$ z $OpenMl$. Oryginalnie zbiór ten ma 7 klastrów. 
+
+```{r}
+head(zoo)
+```
+
+# Indeksy
+
+Wybrałem akurat te indeksy, ponieważ są szeroko opisane w dokumentacji i są dostępne w ramach biblioteki $clValid$, która umożliwia szybkie i przejrzyste porównanie wartości indeksów dla różnych metod i indeksów. Wartości $connectivity$ i $Dunn$ chcemy minimalizować, natomiast $Silhouette$ maksymalizować
+
+
+```{r}
+internal <- clValid(df_clus, nClust = 2:10, clMethods = c("kmeans","pam"), validation = "internal")
+summary(internal)
+```
+
+Widzimy, że $kmeans$ radzi sobie zdecydowanie lepiej od $pam$, jednak nie mamy jednoznacznej odpowiedzi co do ilości klastrów.
+Spójrzmy zatem na indeksy $Gap$ $statistic$ oraz $wss$. 
+
+```{r}
+grid.arrange(
+fviz_nbclust(df_clus, pam, method="gap_stat") + labs(title = "pam - gap_stat"),
+fviz_nbclust(df_clus, kmeans, method="gap_stat") + labs(title = "kmeans - gap_stat"),
+fviz_nbclust(df_clus, pam, method="wss") + labs(title = "pam - wss"),
+fviz_nbclust(df_clus, kmeans, method="wss") + labs(title = "kmeans - wss"), nrow =2)
+
+```
+
+Stosując regułę łokcia możemy przyjąć, że optymalną liczbą klastrów wyznaczoną przez indeksy wewnętrzne jest 5. 
+
+# Klastry
+
+Zobaczmy wizualizacje zbiorów, aby porównać je z naszym wynikiem.
+
+```{r}
+km.res1 <- kmeans(df_clus, 2)
+km.res2 <- kmeans(df_clus, 5)
+km.res3 <- kmeans(df_clus, 10)
+km.res4 <- pam(df_clus, 2)
+km.res5 <- pam(df_clus, 5)
+km.res6 <- pam(df_clus, 10)
+
+
+fviz_cluster(km.res1, data = df_clus, frame.type = "convex")+
+  theme_minimal() + labs(title = "Kmeans - 2")
+fviz_cluster(km.res2, data = df_clus, frame.type = "convex")+
+  theme_minimal() + labs(title = "Kmeans - 5")
+fviz_cluster(km.res3, data = df_clus, frame.type = "convex")+
+  theme_minimal() + labs(title = "Kmeans - 10")
+
+
+fviz_cluster(km.res4, data = df_clus, frame.type = "convex")+
+  theme_minimal() + labs(title = "Pam - 2")
+fviz_cluster(km.res5, data = df_clus, frame.type = "convex")+
+  theme_minimal() + labs(title = "Pam - 5")
+fviz_cluster(km.res6, data = df_clus, frame.type = "convex")+
+  theme_minimal() + labs(title = "Pam - 10")
+```
+
+Widzimy, że $KMeans$ zgodnie z wartościami indeksów lepiej przeprowadza podział niż $pam$, a najlepiej widzimy podział gdy są 2 klastry. Jednak wyniki to też ze względu na strukturę zbioru. Gdy  przyjrzymy się zwierzętom w klastrach nachodzących na siebie przy podziale na 5 grupu widać, że razem zostały sklasyfikowane głównie zwierzęta tego samego rodzaju.
+
+# Indeks zewnętrzny
+
+Indeks, który sprawdzę to  indeks $Jaccarda$ dostępny w bibliotece $clusteval$. Wykonam klasteryzację przy pomocy $kmeans$ oraz $pam$ dla 7 klastrów(rzeczywista liczba) i zweryfikuję podobieństwo otrzymanych etykiet do prawdziwych. Zobaczmy też jak wygląda podział dla 7 klastrów.
+
+```{r}
+true_labels <- as.integer(as.factor(df$type))
+km.res7 <- kmeans(df_clus, 7)
+km.res8 <- pam(df_clus, 7)
+fviz_cluster(km.res7, data = df_clus, frame.type = "convex")+
+  theme_minimal() + labs(title = "KMeans - 7")
+fviz_cluster(km.res8, data = df_clus, frame.type = "convex")+
+  theme_minimal() + labs(title = "Pam - 7")
+km_labs <- km.res7$cluster
+pam_labs <- km.res8$cluster
+
+print("indeks Jaccarda dla prawdziwych etykiet i KMeans")
+external_validation(true_labels, km_labs, method = "jaccard_index")
+print("indeks Jaccarda dla prawdziwych etykiet i PAM")
+external_validation(true_labels, pam_labs, method = "jaccard_index")
+print("indeks Jaccarda dla PAM i KMeans")
+external_validation(pam_labs, km_labs, method = "jaccard_index")
+```
+
+Widzimy, że podobieństwo między wektorem klastrów otrzymanym dzięki $KMeans$ a prawdziwymi etykietami jest wysokie. $PAM$ spisał się zdecydowanie gorzej.
