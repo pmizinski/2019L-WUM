@@ -1,0 +1,137 @@
+---
+title: "PD7"
+author: "Karol Saputa"
+date: "`r format(Sys.time(), '%d - %m - %Y')`"
+output:
+  html_document:
+    df_print: paged
+    toc: true
+    toc_float: true
+    code_folding: hide
+    number_sections: true
+---
+
+```{r setup, include=FALSE, cache=TRUE}
+knitr::opts_chunk$set(echo = TRUE)
+knitr::opts_chunk$set(cache = TRUE)
+```
+
+# Zastosowanie algorytmów klasteryzacji
+Praca ma na celu przedstawienie przykładowych wyników klasteryzacji dla dwóch algorytmów:
+  
+* k-means
+* k-medoids
+
+## Zbiór danych
+"Image Segmentation Data Set The instances were drawn randomly from a database of 7 outdoor images. The images were hand-segmented to create a classification for every pixel. Each instance is a 3x3 region." [1]
+
+* 18 zmiennych numerycznych
+* 2310 obserwacji
+
+## Wczytanie danych
+```{r,include=FALSE}
+library(readr)
+library(ggplot2)
+library(fpc)
+library(cluster)
+library(factoextra)
+library(NbClust)
+
+```
+
+```{r,include=FALSE}
+### WCZYTANIE I PRZESKALOWANIE DANYCH
+df <- read_csv("dataset_36_segment.csv")
+labels <- as.factor(df$class)
+df$class <- NULL
+df$`region-pixel-count` <- NULL
+df <- scale(df)
+n_class <- length(levels(labels))
+```
+
+## Porównanie optymalnej liczby klastrów
+
+### SILHOUETTE (average silhouette width)
+```{r}
+print("kmeans")
+fviz_nbclust(df, kmeans, method = "silhouette")
+print("k-medoids")
+fviz_nbclust(df, pam, method = "silhouette")
+```
+
+### WSS (total within sum of square)
+
+```{r}
+print("kmeans")
+fviz_nbclust(df, kmeans, method = "wss")
+print("k-medoids")
+fviz_nbclust(df, pam, method = "wss")
+```
+
+### Analiza wyników
+Na podstawie wykresów `silhouette` otrzymujemy optymalną liczbę klastrów równą 2. Natomiast dla metryki `wss` w przypadku w przypadku metody k-medoids trudno wyróżnić optymalną liczbę klastrów, jednak w przypadku k-means widać wyraźnie zmianę tendencji na wykresie dla siedmiu klastrów. Jest to o tyle ważne, że w oryginalnych danych właśnie taką liczbą unikalnych etykiet opatrzone są dane.
+
+## Porównanie klastrów
+### 2 klastry 
+#### k-means
+```{r}
+clusters <- kmeans(df, 2)
+pca_df <- prcomp(df)
+
+plot(pca_df$x[,1], pca_df$x[,5], xlab="PC1", ylab = "PC2", main = "PC1 / PC2 - plot", col = clusters$cluster)
+```
+
+#### k-medoids
+```{r}
+clusters <- pam(df, 2)
+pca_df <- prcomp(df)
+plot(pca_df$x[,1], pca_df$x[,5], xlab="PC1", ylab = "PC2", main = "PC1 / PC2 - plot", col = clusters$cluster)
+```
+
+### 7 klastrów
+#### k-means
+```{r}
+clusters <- kmeans(df, n_class)
+pca_df <- prcomp(df)
+par(mfrow=c(1,2))
+plot(pca_df$x[,1], pca_df$x[,3], xlab="PC1", ylab = "PC3", main = "PC1 / PC3 - plot", col = clusters$cluster)
+plot(pca_df$x[,1], pca_df$x[,3], xlab="PC1", ylab = "PC3", main = "PC1 / PC3 - plot", col = labels)
+```
+
+#### k-medoids
+```{r}
+clusters <- pam(df, n_class)
+pca_df <- prcomp(df)
+par(mfrow=c(1,2))
+plot(pca_df$x[,1], pca_df$x[,3], xlab="PC1", ylab = "PC3", main = "PC1 / PC3 - plot", col = clusters$cluster)
+plot(pca_df$x[,1], pca_df$x[,3], xlab="PC1", ylab = "PC3", main = "PC1 / PC3 - plot", col = labels)
+```
+
+### Analiza wyników
+Należy zauważyć całkowicie różne zachowanie przypadku dwóch klastróch. Metodą k-medoidów otrzymujemy dwa klastry rzeczywiście wyróżniające się na wykresie składowych głównych. Natomiast metodą k-średnich otrzymujemy jeden duży klaster oraz drugi jako zbiór obserwacji odstających (wnioskując po wykresie składowych głównych).
+
+W przypadku wybrania siedmiu klastrów (na podstawie informacji o danych oraz metryki `wss`) otrzymujemy trudną do zwizualizowania strukturę podziału, podobną w przypadku obu algorytmów. Na prawo od wykresów klasteryzacji znajdują się wykresy z oryginalnymi etykietami (niestety z rozbieżnością kolorów).
+
+## Porównanie centrów klastrów
+Poniżej wykresy odpowiednio dla k-means i k-medoids:
+
+
+![](one_kmedoids.png)
+
+![](one_kmeans_7.png)
+![](one_kmedoids_7.png)
+![](one_kmeans.png)
+Kmeans:
+![](clusters_kmeans.png)
+Kmedoids:
+![](clusters_kmedoids_2.png)
+Poniżej wykres k-medoids dla siedmiu klastrów:
+![](clusters_kmedoids_7.png)
+
+### Analiza wyników
+Trudno dobrze zauważyć dobrze rozmieszczenie centrów klastrów przy użyciu dwóch zmiennych. Zastosowano większe wykresy zależności pomiędzy parami zmiennych wynikowych PCA dla pokazania zależności pomiędzy centrami. 
+Dla wielu z tych wykresów nie widać żadnego rozdzielenia centrów.
+Nie znaleziono zauważalnej różnicy pomiędzy centrami dla k-means i k-medoids.
+
+## Źródła
+* [1] Opis zbioru w OpenML; https://www.openml.org/d/36
