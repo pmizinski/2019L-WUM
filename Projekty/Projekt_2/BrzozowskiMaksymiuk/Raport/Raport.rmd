@@ -1,0 +1,470 @@
+---
+title: "Projekt 2 - raport końcowy"
+author: "Łukasz Brzozowski, Szymon Maksymiuk"
+date: "`r format(Sys.time(), '%d - %m - %Y')`"
+output:
+  html_document:
+    df_print: paged
+    toc: true
+    toc_float: true
+    code_folding: hide
+    number_sections: true
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(warning=FALSE, message=FALSE, cache = TRUE)
+library(MASS)
+library(clusterGeneration)
+library(plotly)
+library(car)
+library(dplyr)
+library(ggplot2)
+library(knitr)
+library(FactoMineR)
+library(factoextra)
+library(cluster)
+library(ggbiplot)
+library(DataExplorer)
+library(kableExtra)
+library(patchwork)
+library(caret)
+library(mlr)
+library(mlrMBO)
+library(genie)
+library(ggbiplot)
+```
+
+# Wprowadzenie i prezentacje danych
+
+## Opis ramki danych
+
+
+Prezentowane dane opisują wartości akcelerometrów i żyroskopów telefonów komórkowych, przy pomocy których przewidywano stan, w jakim znajduje się właściciel komórki. Etykiety odpowiadają trzem stanom statycznym:
+
+* STANDING,
+* SITTING,
+* LYING,
+
+oraz trzem stanom dynamicznym:
+
+* WALKING,
+* WALKING DOWNSTAIRS,
+* WALKING UPSTAIRS.
+
+Dodatkowo mamy także obserwacje stanów przechodnich:
+
+* STAND-TO-SIT,
+* SIT-TO-STAND,
+* SIT-TO-LIE,
+* LIE-TO-SIT,
+* STAND-TO-LIE,
+* LIE-TO-STAND.
+
+Obserwacje dotyczące stanów przechodnich stanowiły jednak marginalną część całego zbioru, dlatego postanowiliśmy je usunąć.
+
+```{r, message = FALSE, warning=FALSE}
+dat <- read.csv("./Train/X_train.txt", sep = " ", header = FALSE)
+labels <- read.csv("./Train/features.txt", header = FALSE)
+colnames(dat) <- labels$V1
+labs <- read.csv("./Train/y_train.txt", header = FALSE)
+dat <- cbind(dat, labs)
+colnames(dat) <- c(colnames(dat)[1:(length(colnames(dat))-1)], "Act")
+meanings <- read.csv("./Train/activity_labels.txt", header = FALSE)
+meanings <- as.character(meanings[1:6,])
+dat1<- dat[dat$Act %in% 1:6,]
+dat1[1:100, 1:10]
+```
+
+Zauważmy, że ramka danych zawiera bardzo wiele zmiennych. Po pierwsze, pojawiają się zmienne:
+
+* tBodyAcc-XYZ
+* tGravityAcc-XYZ
+* tBodyAccJerk-XYZ
+* tBodyGyro-XYZ
+* tBodyGyroJerk-XYZ
+* tBodyAccMag
+* tGravityAccMag
+* tBodyAccJerkMag
+* tBodyGyroMag
+* tBodyGyroJerkMag
+
+Mierzą one odpowiednio wartości akcelerometru oraz żyroskopu w trzech osiach w czasie. Ponadto w kolumnach `...Jerk` podawana jest wartość zrywu, a w kolumnach `...Mag` wielkość. Dla niektórych z&nbsp;powyższych obliczono jeszcze także szybką transformację Fouriera. Odpowiadają jej kolumny:
+
+* fBodyAcc-XYZ
+* fBodyAccJerk-XYZ
+* fBodyGyro-XYZ
+* fBodyAccMag
+* fBodyAccJerkMag
+* fBodyGyroMag
+* fBodyGyroJerkMag
+
+Każda z powyższych wartości była mierzona z częstotliwością 50Hz, jednak w ramce nie ma pojedynczych obserwacji. Są za to wartości statystyk wszystkich zmiennych, czyli:
+
+- mean(): Mean value
+- std(): Standard deviation
+- mad(): Median absolute deviation 
+- max(): Largest value in array
+- min(): Smallest value in array
+- sma(): Signal magnitude area
+- energy(): Energy measure. Sum of the squares divided by the number of values. 
+- iqr(): Interquartile range 
+- entropy(): Signal entropy
+- arCoeff(): Autorregresion coefficients with Burg order equal to 4
+- correlation(): correlation coefficient between two signals
+- maxInds(): index of the frequency component with largest magnitude
+- meanFreq(): Weighted average of the frequency components to obtain a mean frequency
+- skewness(): skewness of the frequency domain signal 
+- kurtosis(): kurtosis of the frequency domain signal 
+- bandsEnergy(): Energy of a frequency interval within the 64 bins of the FFT of each window.
+- angle(): Angle between to vectors.
+
+Ostatecznie pojawiają się dodatkowe kolumny typu:
+
+* gravityMean
+* tBodyAccMean
+* tBodyAccJerkMean
+* tBodyGyroMean
+* tBodyGyroJerkMean
+
+wykorzystywane do obliczania wartości `angle()`.
+
+Struktura ramki danych oraz kolumny wskazują na duże wzajemne zależności zmiennych i wysokie korelacje. Oznacza to, że faza inżynierii cech sprowadzi się wyłącznie do redukcji wymiarów, ponieważ w przypadku omawianego zbioru dostępne jest mnóstwo informacji o każdej obserwacji.
+
+## Wizualizacje
+
+![TSNE zbioru](figures/tsne.png)
+
+Na powyższym wykresie możemy zauważyć, że na "wstążkach" okresowo pojawiają się grupy oznaczające aktywności 1-3 oraz 4-6, co implikuje istnienie co najmniej dwóch klastrów.
+
+```{r, message = FALSE, warning=FALSE}
+labsDat1 <- dat1[,562]
+dat.pca <- prcomp(dat1[, 1:561],
+                  center = TRUE,
+                  scale. = TRUE)
+plot(dat.pca, type = "l")
+g <- ggbiplot(dat.pca, obs.scale = 1, var.scale = 1, 
+              groups = labsDat1, ellipse = TRUE, 
+              circle = TRUE, var.axes = FALSE)
+  
+g
+```
+
+Również wykres PCA wskazuje, że w zbiorze istnieją dwa klastry. Warto także zwrócić uwagę na wysoki współczynnik wyjaśnianej wariancji przez pierwszą składową - sugeruje on, że znaczna część kolumn może zostać bezpiecznie usunięta ze zbioru.
+
+Do przedstawienia korelacji wybierzemy próbkę zmiennych reprezentujących średnie wartości zawartych danych, tzn. kolumny `...Mean`.
+
+```{r, fig.width=12, fig.height=12}
+DataExplorer::plot_correlation(dat1[,stringi::stri_detect_fixed(colnames(dat1), "Mean")])
+```
+
+Widzimy bardzo wysokie współczynniki korelacji wielu z powyższych zmiennych, co oznacza, że w znacznym stopniu będzie można zmniejszyć wymiar ramki.
+
+## Podsumowanie
+
+Podsumowując, ramka danych zawiera bardzo dokładnie opisane obserwacje wyników akcelerometru i żyroskopu. Zmienne są często ze sobą skorelowane, co na potrzeby klasteryzacji wykorzystamy do zmniejszenia wymiaru. Powyższa analiza wskazuje także, że optymalną liczbą klastrów w ramce będzie dwa.
+
+# Redukcja wymiarów
+
+## Naiwna redukcja
+
+Na początku w sposób naiwny usuwamy kolumny silnie skorelowane z innymi. Jako graniczny punkt korelacji wykorzystamy 0.9, tj. iteracyjnie usuwamy kolumnę skorelowaną z inną ze współczynnikiem większym bądź równym 0.9 i ponownie przeliczamy współczynniki korelacji.
+
+```{r, message = FALSE, warning=FALSE}
+f <- findCorrelation(cor(dat1), cutoff = 0.90, exact = TRUE)
+dat2 <- dat1[,-f]
+dat2temp <- dat2
+dat2 <- dat2[,-ncol(dat2)]
+dat2.pca <- prcomp(dat2[, 1:(ncol(dat2)-1)],
+                   center = TRUE,
+                   scale. = TRUE)
+fviz_eig(dat2.pca)
+dim(dat2)
+
+pca1 <- PCA(dat2, graph = F)
+ind1 <- pca1$ind$coord[,1:3]
+x <- ind1[,1] ; y <- ind1[,2] ; z <- ind1[,3]
+p <- plot_ly(dat2temp, x = ~x, y = ~y, z = ~z, color = ~Act, size = 1) %>%
+  add_markers() %>%
+  layout(scene = list(xaxis = list(title = 'PC1'),
+                     yaxis = list(title = 'PC2'),
+                     zaxis = list(title = 'PC3')))
+p
+```
+
+Powyższym sposobem udało się zredukować liczbę kolumn do 214 (wliczając kolumnę celu). Co prawda procent wariancji wyjaśnianej przez pierwsze składowe główne znacznie spadł w porównaniu do PCA całego zbioru, jednak udało się usunąć ponad 300 kolumn. Ponadto na PCA klastry są prawie równie wyraźnie separowalne, co wcześniej.
+
+## VIF
+
+Do dalszej redukcji wymiarów użyjemy metody Variance Inflation Factor. Za granicę odcięcia przyjmiemy VIF równy 10 oznaczający wysoką współkorelację liniową.
+
+
+```{r, eval = FALSE}
+dat3 <- dat2
+colnames(dat3) <- gsub("-", "", colnames(dat3))
+colnames(dat3) <- gsub(" ", "", colnames(dat3))
+vif_func<-function(in_frame,thresh=10,trace=T,...){
+
+  library(fmsb)
+  
+  if(any(!'data.frame' %in% class(in_frame))) in_frame<-data.frame(in_frame)
+  
+  #get initial vif value for all comparisons of variables
+  vif_init<-NULL
+  var_names <- names(in_frame)
+  for(val in var_names){
+      regressors <- var_names[-which(var_names == val)]
+      form <- paste(regressors, collapse = '+')
+      form_in <- formula(paste(val, '~', form))
+      vif_init<-rbind(vif_init, c(val, VIF(lm(form_in, data = in_frame))))
+      }
+  vif_max<-max(as.numeric(vif_init[,2]), na.rm = TRUE)
+
+  if(vif_max < thresh){
+    if(trace==T){ #print output of each iteration
+        prmatrix(vif_init,collab=c('var','vif'),rowlab=rep('',nrow(vif_init)),quote=F)
+        cat('\n')
+        cat(paste('All variables have VIF < ', thresh,', max VIF ',round(vif_max,2), sep=''),'\n\n')
+        }
+    return(var_names)
+    }
+  else{
+
+    in_dat<-in_frame
+
+    #backwards selection of explanatory variables, stops when all VIF values are below 'thresh'
+    while(vif_max >= thresh){
+      
+      vif_vals<-NULL
+      var_names <- names(in_dat)
+        
+      for(val in var_names){
+        regressors <- var_names[-which(var_names == val)]
+        form <- paste(regressors, collapse = '+')
+        form_in <- formula(paste(val, '~', form))
+        vif_add<-VIF(lm(form_in, data = in_dat, ...))
+        vif_vals<-rbind(vif_vals,c(val,vif_add))
+        }
+      max_row<-which(vif_vals[,2] == max(as.numeric(vif_vals[,2]), na.rm = TRUE))[1]
+
+      vif_max<-as.numeric(vif_vals[max_row,2])
+
+      if(vif_max<thresh) break
+
+      in_dat<-in_dat[,!names(in_dat) %in% vif_vals[max_row,1]]
+
+      }
+
+    return(names(in_dat))
+    
+    }
+  
+}
+#Źródło kodu funkcji: https://beckmw.wordpress.com/2013/02/05/collinearity-and-stepwise-vif-selection/
+
+namesDat3 <- vif_func(in_frame=dat3,thresh=10,trace=T)
+namesDat3
+dat3 <- dat3[,namesDat3]
+write.csv(dat3, file = "dat3.csv")
+```
+
+```{r}
+dat3 <- read.csv("dat3.csv")
+dim(dat3)
+```
+
+Jak widzimy, udało nam się dalej zmniejszyć wymiar ramki danych. Sprawdźmy, jak wygląda PCA nowych zredukowanych danych.
+
+```{r, message = FALSE, warning=FALSE}
+dat3 <- dat3[,-1]
+dat3.pca <- prcomp(dat3,
+                  center = TRUE,
+                  scale. = TRUE)
+plot(dat3.pca, type = "l")
+g <- ggbiplot(dat3.pca, obs.scale = 1, var.scale = 1, 
+              groups = labsDat1, ellipse = TRUE, 
+              circle = TRUE, var.axes = FALSE)
+  
+g
+```
+
+Jak widzimy powyżej, klastry nadal są dość dobrze separowalne. Na powyższej ramce możemy zatem przeprowadzić klasteryzację.
+
+# Wybór liczby klastrów
+
+Po zredukowaniu wymiarów ramki danych możemy zająć się wyborem optymalnej liczby klastrów. Do tego celu wykorzystamy dwie metody: `wss` oraz `silhouette`. Metoda Gap Statistic nawet przy obecnym zredukowanym wymiarze danych okazała się zbyt kosztowna obliczeniowo.
+
+```{r, message = FALSE, warning=FALSE}
+p1_1 <- fviz_nbclust(dat3, kmeans, method = "wss") +
+  labs(subtitle = "WSS", title = "")
+
+p1_2 <- fviz_nbclust(dat3, kmeans, method = "silhouette") +
+  labs(subtitle = "Silhouette", title = "")
+
+p1_1 + p1_2
+```
+
+Metoda WSS nie daje jednoznacznego wyniku, jednak metoda Silhouette wskazuje, że 2 jest optymalną liczbą klastrów.
+
+# Klasteryzacja
+
+Klasteryzację przeprowadzimy dla sugerowanej liczby klastrów, tzn. 2, oraz dla 6 klastrów, co odpowiada wejściowej liczbie etykiet. Użyjemy trzech metod: `kmeans`, `cmeans` oraz `genie`. Do ewaluacji wykorzystamy indeksy Dunna i Daviesa-Bouldina oraz statystykę gamma Huberta-Pearsona. 
+
+```{r, message=FALSE, warning=FALSE}
+dat_3 <- dat3
+
+toRemember <- colnames(dat_3)
+temp <- paste0("V", 1:ncol(dat_3))
+colnames(dat_3) <- temp
+tsk <- makeClusterTask(data = dat_3)
+lrn1_2 <- makeLearner("cluster.kmeans", par.vals = list(centers = 2))
+lrn2_2 <- makeLearner("cluster.cmeans", par.vals = list(centers = 2))
+lrn1_6 <- makeLearner("cluster.kmeans", par.vals = list(centers = 6))
+lrn2_6 <- makeLearner("cluster.cmeans", par.vals = list(centers = 6))
+
+model1_2 <- mlr::train(lrn1_2, tsk)
+labels1_2 <- model1_2$learner.model$cluster
+model1_6 <- mlr::train(lrn1_6, tsk)
+labels1_6 <- model1_6$learner.model$cluster
+ 
+model2_2 <- mlr::train(lrn2_2, tsk)
+labels2_2 <- model2_2$learner.model$cluster
+model2_6 <- mlr::train(lrn2_6, tsk)
+labels2_6 <- model2_6$learner.model$cluster
+ 
+model_genie <- hclust2(dist(dat_3), thresholdGini = 0.4)
+labels_genie_2 <- cutree(model_genie, k=2)
+labels_genie_6 <- cutree(model_genie, k=6)
+```
+
+```{r, message=FALSE, warning=FALSE}
+dat <- dat_3
+dunn1_2 <- clValid::dunn(Data = dat, clusters = labels1_2)
+dunn1_6 <- clValid::dunn(Data = dat, clusters = labels1_6)
+ 
+db1_2 <- clusterSim::index.DB(x = dat, cl = labels1_2)
+db1_6 <- clusterSim::index.DB(x = dat, cl = labels1_6)
+ 
+hb1_2 <- fpc::cluster.stats(dist(dat), labels1_2)
+hb1_6 <- fpc::cluster.stats(dist(dat), labels1_6)
+```
+
+```{r, message=FALSE, warning=FALSE}
+dunn2_2 <- clValid::dunn(Data = dat, clusters = labels2_2)
+dunn2_6 <- clValid::dunn(Data = dat, clusters = labels2_6)
+ 
+db2_2 <- clusterSim::index.DB(x = dat, cl = labels2_2)
+db2_6 <- clusterSim::index.DB(x = dat, cl = labels2_6)
+ 
+hb2_2 <- fpc::cluster.stats(dist(dat), labels2_2)
+hb2_6 <- fpc::cluster.stats(dist(dat), labels2_6)
+```
+ 
+```{r, message=FALSE, warning=FALSE}
+dunn_genie_2 <- clValid::dunn(Data = dat, clusters = labels_genie_2)
+dunn_genie_6 <- clValid::dunn(Data = dat, clusters = labels_genie_6)
+ 
+db_genie_2 <- clusterSim::index.DB(x = dat, cl = labels_genie_2)
+db_genie_6 <- clusterSim::index.DB(x = dat, cl = labels_genie_6)
+ 
+hb_genie_2 <- fpc::cluster.stats(dist(dat), labels_genie_2)
+hb_genie_6 <- fpc::cluster.stats(dist(dat), labels_genie_6)
+```
+ 
+## Porównanie wyników
+ 
+```{r, message = FALSE, warning=FALSE}
+dunn_df <- data.frame("model" = c("kmeans", "cmeans", "genie", "kmeans", "cmeans", "genie"), "val" = c(dunn1_2, dunn2_2, dunn_genie_2, dunn1_6, dunn2_6, dunn_genie_6), "kat" = c("2","2","2","6","6","6"))
+ 
+hb_df <- data.frame("model" = c("kmeans", "cmeans", "genie", "kmeans", "cmeans", "genie"), "val" = c(hb1_2$pearsongamma, hb2_2$pearsongamma, hb_genie_2$pearsongamma, hb1_6$pearsongamma, hb2_6$pearsongamma, hb_genie_6$pearsongamma), "kat" = c("2","2","2","6","6","6"))
+ 
+db_df <- data.frame("model" = c("kmeans", "cmeans", "genie", "kmeans", "cmeans", "genie"), "val" = c(db1_2$DB, db2_2$DB, db_genie_2$DB, db1_6$DB, db2_6$DB, db_genie_6$DB), "kat" = c("2","2","2","6","6","6"))
+ 
+dunn_plot <- ggplot(data=dunn_df, aes(x=model, y=val, fill=kat)) +
+geom_bar(stat="identity", width = 0.8, position = position_dodge(width = 0.9), colour="black")+
+geom_text(aes(label=round(val, 4)), vjust=1.6, color="black",
+          position = position_dodge(0.9), size=3.5)+
+ylim(0,max(dunn_df$val)+0.04)+
+scale_fill_brewer(palette="Set2")+
+labs(x="", y="", fill = "")+
+ggtitle("Indeks Dunna")+
+theme_minimal()+
+theme(plot.title = element_text(hjust = 0.5))
+ 
+hb_plot <- ggplot(data=hb_df, aes(x=model, y=val, fill=kat)) +
+geom_bar(stat="identity", width = 0.8, position = position_dodge(width = 0.9), colour="black")+
+geom_text(aes(label=round(val, 4)), vjust=1.6, color="black",
+          position = position_dodge(0.9), size=3.5)+
+ylim(0,max(hb_df$val)+0.1)+
+scale_fill_brewer(palette="Set2")+
+labs(x="", y="", fill = "")+
+ggtitle("Gamma Huberta-Pearsona")+
+theme_minimal()+
+theme(plot.title = element_text(hjust = 0.5))
+ 
+db_plot <- ggplot(data=db_df, aes(x=model, y=val, fill=kat)) +
+geom_bar(stat="identity", width = 0.8, position = position_dodge(width = 0.9), colour="black")+
+geom_text(aes(label=round(val, 4)), vjust=1.6, color="black",
+          position = position_dodge(0.9), size=3.5)+
+ylim(0,max(db_df$val)+0.1)+
+scale_fill_brewer(palette="Set2")+
+labs(x="", y="", fill = "")+
+ggtitle("Indeks Daviesa–Bouldina ")+
+theme_minimal()+
+theme(plot.title = element_text(hjust = 0.5))
+ 
+dunn_plot+hb_plot+db_plot+plot_layout(ncol=1)
+```
+
+Zwróćmy uwagę, że metody `kmeans` oraz `cmeans` osiągnęły we wszystkich testach bardzo zbliżone wyniki, jedynie metoda `genie` daje wyniki istotnie inne. Osiągnęła ona najlepszy indeks Dunna, jednak dla 6 klastrów otrzymała znacznie gorsze wyniki gammy i indeksu DB od pozostałych klasteryzacji. Ciekawym zjawiskiem jest także fakt, że liczba klastrów nie ma prawie żadnego wpływu na metodę `kmeans`, a w metodzie `cmeans` tylko na indeks Daviesa-Bouldina, gdzie 6 klastrów dało lepszy wynik niż 2. Ostatecznie zatem kandydatami na najlepsze modele klasteryzacji są `cmeans` na 6 klastrach oraz `genie` na dwóch klastrach.
+
+# Wybór najlepszego modelu
+
+```{r}
+dat4 <- cbind(dat3, dat1$Act)
+dat4.pca <- prcomp(dat4,
+                  center = TRUE,
+                  scale. = TRUE)
+
+datCm <- cbind(dat3, labels2_6)
+datCm.pca <- prcomp(datCm,
+                  center = TRUE,
+                  scale. = TRUE)
+
+datG <- cbind(dat3, labels_genie_2)
+datG.pca <- prcomp(datG,
+                  center = TRUE,
+                  scale. = TRUE)
+
+gCm <- ggbiplot(datCm.pca, obs.scale = 1, var.scale = 1, 
+              groups = labels2_6, ellipse = TRUE, 
+              circle = TRUE, var.axes = FALSE)
+  
+g4 <- ggbiplot(dat4.pca, obs.scale = 1, var.scale = 1, 
+              groups = dat4$`dat1$Act`, ellipse = TRUE, 
+              circle = TRUE, var.axes = FALSE)
+
+gG <-  ggbiplot(datG.pca, obs.scale = 1, var.scale = 1, 
+              groups = labels_genie_2, ellipse = TRUE, 
+              circle = TRUE, var.axes = FALSE)
+
+g4 + gCm + gG + plot_layout(ncol=1)
+```
+
+Jak widzimy, algorytm `cmeans` zamiast zrealizować 6 klastrów, zrealizował tylko 4, z czego 2 są bardzo małe.
+
+```{r}
+table(labels2_6)
+```
+
+Zaskakująca jest zatem znaczna poprawa indeksu Daviesa-Bouldina w porównaniu do wersji z dwoma klastrami. Otrzymane dwie klasy jednak w miarę dobrze odpowiadają możliwym do zaobserwowania klastrom i odpowiadają etykietom poza punktami znajdującymi się w częsci wspólnej obu klastrów. Algorytm `genie` poradził sobie z nimi jednak znacznie lepiej, a co za tym idzie, okazuje się być najlepszym z testowanych przez nas modeli do klasteryzacji omawianego zbioru danych.
+
+# Podział zadań
+
+* Opis danych wejściowych, TSNE - Łukasz
+* PCA, wykres korelacji - Szymon
+* Naiwne usuwanie korelacji - Łukasz
+* VIF - wspólnie
+* Wybór liczby klastrów _ Łukasz
+* Modele i indeksy - Szymon
+* Porównanie wyników - Szymon
+* Podsumowanie - Łukasz
