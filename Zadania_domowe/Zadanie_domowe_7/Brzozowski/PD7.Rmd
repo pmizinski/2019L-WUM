@@ -1,0 +1,245 @@
+---
+title: "Praca domowa 7"
+author: "Łukasz Brzozowski"
+date: "10.06.2019"
+output:
+  html_document:
+    df_print: paged
+    toc: true
+    toc_float: true
+    code_folding: hide
+    number_sections: true
+    theme: spacelab
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, cache = TRUE)
+library(dplyr)
+library(mlr)
+library(ggplot2)
+library(DALEX)
+library(factoextra)
+library(NbClust)
+library(kableExtra)
+library(clusteval)
+library(patchwork)
+library(ggbiplot)
+```
+
+# Prezentacja danych
+
+Pracuję na zbiorze `dermatology` z bazy OpenML. Dane dotyczą pacjentów z rumieniami różnych klas. Kolumną celu jest w tym wypadku `erythema` określająca stopień rumienia. Kolumna celu osiąga 4 unikalne wartości od 0 do 3. Poniżej prezentuję ramkę po przeskalowaniu z usuniętą kolumną celu.
+
+
+```{r}
+dat <- read.csv("dataset_35_dermatology.csv")
+dat <- na.omit(dat)
+dat <- dat %>% select(-Age)
+datLabels <- dat[,1]
+datLabels <- datLabels + 1
+dat <- dat[,-1]
+dat <- as.data.frame(scale(dat))
+kable(dat) %>%
+  kable_styling(bootstrap_options = c("striped", "hover", "condensed", "responsive")) %>%
+  scroll_box(height = "200px")
+```
+
+# Optymalna liczba klastrów
+
+Na początku sprawdźmy, jaka jest optymalna liczba klastrów w tym zbiorze
+
+```{r}
+p1_1 <- fviz_nbclust(dat, kmeans, method = "wss") +
+  labs(subtitle = "K-means", title = "")
+
+p2_1 <- fviz_nbclust(dat, cluster::pam, method = "wss")+
+  labs(subtitle = "K-medoids", title = "")
+
+p1_2 <- fviz_nbclust(dat, kmeans, method = "silhouette") +
+  labs(subtitle = "K-means", title = "")
+
+p2_2 <- fviz_nbclust(dat, cluster::pam, method = "silhouette")+
+  labs(subtitle = "K-medoids", title = "")
+
+p1_3 <- fviz_nbclust(dat, kmeans, nboot = 300, method = "gap_stat") +
+  labs(subtitle = "K-means", title = "")
+
+p2_3 <- fviz_nbclust(dat, cluster::pam, nboot = 300, method = "gap_stat")+
+  labs(subtitle = "K-medoids", title = "")
+
+```
+
+```{r, fig.height=4}
+p1_1 + p2_1 
+p1_2 + p2_2
+p1_3 + p2_3
+```
+
+Dla modelu `k-mean` optymalną liczbą klastrów są 3, jednak warto zwrócić uwagę na wyróżniające się na powyższych wykresach 6 klastrów. W przypadku k-medoidów powyższe statystyki nie są zgodne co do optymalnej liczby klastrów - otrzymujemy odpowiednio 5, 3 i 6. Wydaje się, że 5 klastrów będzie najbardziej optymalne. Możemy jednak na potrzeby zadania porównać przypadki 3 i 6 klastrów w obu metodach, ponieważ także się wyróżniały.
+
+
+```{r, cache=FALSE}
+set.seed(123)
+km3 <- kmeans(dat, 3)
+km6 <- kmeans(dat, 6)
+kd3 <- cluster::pam(dat, 3)
+kd6 <- cluster::pam(dat, 6)
+```
+
+
+Do porównania otrzymanych klastrów możemy użyć indeksu Jaccarda, który zmierzy podobieństwa klastrów. Wartości bliskie 1 będą oznaczały podobną klasteryzację. Następnie wykorzystamy indeksy Dunna i Daviesa-Bouldina do porównania wyników.
+
+
+
+## 3 klastry
+
+### Indeks Jaccarda
+
+```{r, cache = FALSE}
+jc <- cluster_similarity(km3$cluster, kd3$clustering, similarity = "jaccard")
+jc
+```
+
+Otrzymujemy bardzo wysoki indeks Jaccarda wskazujący na duże podobieństwa pomiędzy klastrami.
+
+### Indeksy Dunna i Daviesa-Bouldina
+
+```{r, cache = FALSE}
+dunn1_3 <- clValid::dunn(Data = dat, clusters = km3$cluster)
+dunn2_3 <- clValid::dunn(Data = dat, clusters = kd3$clustering)
+
+db1_3 <- clusterSim::index.DB(x = dat, cl = km3$cluster)
+db2_3 <- clusterSim::index.DB(x = dat, cl = kd3$clustering)
+
+db1_3 <- db1_3$DB
+db2_3 <- db2_3$DB
+
+df<- data.frame("Method" = c("k-means", "k-medoids"), "Dunn" = c(dunn1_3, dunn2_3), "DB" = c(db1_3, db2_3))
+df
+```
+
+Indeksy Dunna są identyczne z dokładnością do aż siedmiu miejsc po przecinku, a indeksy Daviesa-Bouldina różnią się bardzo nieznacznie.
+
+### Centra
+
+Centra możemy porównać przez sprawdzenie, jak daleko od siebie leżą centra odpowiadających sobie klastrów (przez obliczenie sumy modułów różnic odpowiednich współrzędnych).
+
+```{r}
+kmc3_1 <- km3$centers[1,]
+kmc3_2 <- km3$centers[2,]
+kmc3_3 <- km3$centers[3,]
+kd3_1 <- kd3$medoids[1,]
+kd3_2 <- kd3$medoids[2,]
+kd3_3 <- kd3$medoids[3,]
+sum(abs(kmc3_1 - kd3_3))
+sum(abs(kmc3_2 - kd3_1))
+sum(abs(kmc3_3 - kd3_2))
+```
+
+Powyżej widzimy, że odległości centrów od siebie są bardzo niewielkie w porównaniu z rozmiarami ramki danych. Stąd centra odpowiednich klastrów leżą blisko siebie.
+
+## 6 klastrów
+
+### Indeks Jaccarda
+
+```{r, cache = FALSE}
+jc <- cluster_similarity(km6$cluster, kd6$clustering, similarity = "jaccard")
+jc
+```
+
+Tym razem osiągnęliśmy znacznie inną klasteryzację, indeks Jaccarda jest mniejszy niż połowa.
+
+### Indeksy Dunna i Daviesa-Bouldina
+
+```{r, cache = FALSE}
+dunn1_6 <- clValid::dunn(Data = dat, clusters = km6$cluster)
+dunn2_6 <- clValid::dunn(Data = dat, clusters = kd6$clustering)
+
+db1_6 <- clusterSim::index.DB(x = dat, cl = km6$cluster)
+db2_6 <- clusterSim::index.DB(x = dat, cl = kd6$clustering)
+
+db1_6 <- db1_6$DB
+db2_6 <- db2_6$DB
+
+df<- data.frame("Method" = c("k-means", "k-medoids"), "Dunn" = c(dunn1_6, dunn2_6), "DB" = c(db1_6, db2_6))
+df
+```
+
+Indeksy Dunna przyjmują bardzo podobne wartości, za to indeks DB wskazuje, że klasteryzacja k-medoidami działa nieco lepiej.
+
+### Centra
+
+Centra możemy porównać przez sprawdzenie, jak daleko od siebie leżą centra odpowiadających sobie klastrów (przez obliczenie sumy modułów różnic odpowiednich współrzędnych).
+
+```{r}
+kmc6_1 <- km6$centers[1,]
+kmc6_2 <- km6$centers[2,]
+kmc6_3 <- km6$centers[3,]
+kmc6_4 <- km6$centers[4,]
+kmc6_5 <- km6$centers[5,]
+kmc6_6 <- km6$centers[6,]
+kd6_1 <- kd6$medoids[1,]
+kd6_2 <- kd6$medoids[2,]
+kd6_3 <- kd6$medoids[3,]
+kd6_4 <- kd6$medoids[4,]
+kd6_5 <- kd6$medoids[5,]
+kd6_6 <- kd6$medoids[6,]
+sum(abs(kmc6_1 - kd6_1))
+sum(abs(kmc6_2 - kd6_3))
+sum(abs(kmc6_3 - kd6_4))
+sum(abs(kmc6_4 - kd6_5))
+sum(abs(kmc6_5 - kd6_2))
+sum(abs(kmc6_6 - kd6_6))
+# kmc <- data.frame(kmc6_1, kmc6_2, kmc6_3, kmc6_4, kmc6_5, kmc6_6)
+# kdc <- data.frame(kd6_1, kd6_2, kd6_3, kd6_4, kd6_5, kd6_6)
+# library(combinat)
+# perms <- permn(1:6)
+# minDist <- Inf
+# j <- 0
+# for(i in 1:length(perms)){
+#   temp <- sum(abs(kmc - kdc[,perms[[i]]]))
+#   if(temp < minDist){
+#     minDist <- temp
+#     j <- i
+#   }
+# }
+# perms[192]
+```
+
+Powyższe sumy różnic osiągają najmniejszą sumę spośród wszystkich kombinacji kolumn. Widzimy, że w tym przypadku centra klastrów nie są do siebie podobne. Niestety wykorzystana implementacja k-medoidów nie pozwala na porównanie zbieżności.
+
+# Wizualizacje
+
+Na końcu możemy przyjrzeć się PCA badanego zbioru. Na górnych wykresach kolory odpowiadają klasteryzacji `k-means`, na dolnych `k-medoids`.
+
+## 3 klastry
+```{r}
+dat3.pca <- prcomp(dat,
+                  center = TRUE)
+
+g1 <- ggbiplot(dat3.pca, obs.scale = 1, var.scale = 1, 
+              groups = km3$cluster, ellipse = TRUE, 
+              circle = TRUE, var.axes = FALSE, main = "K-means")
+g2 <- ggbiplot(dat3.pca, obs.scale = 1, var.scale = 1, 
+              groups = kd3$clustering, ellipse = TRUE, 
+              circle = TRUE, var.axes = FALSE, main = "K-medoids")
+g1 / g2
+```
+
+Przy trzech klastrach klasteryzacje odbyły się prawie identycznie, dobrze odróżniając widoczne na PCA 3 grupy.
+
+## 6 klastrów
+```{r}
+dat3.pca <- prcomp(dat,
+                  center = TRUE)
+
+g1 <- ggbiplot(dat3.pca, obs.scale = 1, var.scale = 1, 
+              groups = km6$cluster, ellipse = TRUE, 
+              circle = TRUE, var.axes = FALSE, main = "K-means")
+g2 <- ggbiplot(dat3.pca, obs.scale = 1, var.scale = 1, 
+              groups = kd6$clustering, ellipse = TRUE, 
+              circle = TRUE, var.axes = FALSE, main = "K-medoids") 
+g1 / g2
+```
+
+Dla 6 klastrów algorytmy już różnie poszukiwały klastrów, co widać powyżej.
