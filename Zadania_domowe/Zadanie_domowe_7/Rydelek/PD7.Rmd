@@ -1,0 +1,98 @@
+---
+title: "PD 7"
+author: "Adam Rydelek"
+date: "`r format(Sys.time(), '%d - %m - %Y')`"
+output:
+  html_document:
+    df_print: paged
+    toc: true
+    toc_float: true
+    code_folding: hide
+    number_sections: true
+---
+
+```{r setup, echo = F,warning=FALSE, message=FALSE, comment=FALSE, prompt=FALSE}
+knitr::opts_chunk$set(warning=FALSE, message=FALSE, comment=FALSE, prompt=FALSE)
+
+library(ggplot2)
+library(OpenML)
+library(ClusterR)
+library(NbClust)
+library(dplyr)
+library(factoextra)
+library(fpc)
+library(cluster)
+library(clValid)
+library(mclust)
+library(rbenchmark)
+
+
+x <- getOMLDataSet(36)
+x <- x$data
+x <- select(x, -class)
+x <- center_scale(x, mean_center = T, sd_scale = T)
+```
+
+# Wprowadzenie
+
+Celem tej pracy jest porównanie algorytmów **k-średnich** i **k-medoidów**. Na początku porównamy optymalne liczby klastrów i zwizualizujemy podział, starając się zauważyć różnice. Działania te przeprowadzę na zbiorze `segment` z OpenML'a.
+
+# Optymalna liczba klastrów
+
+```{r echo = F,warning=FALSE, message=FALSE}
+g1 <- fviz_nbclust(x, kmeans, method = "silhouette", linecolor = "red", k.max=8) +
+  geom_vline(xintercept = 1, linetype = 1)+
+  labs(title = "Optimal number of clusters", subtitle = "K-Means", xlab="")
+g2 <- fviz_nbclust(x, pam, method = "silhouette", k.max=8) +
+  geom_vline(xintercept = 1, linetype = 1)+
+  labs(title="",subtitle = "K-Metoids",xlab="")
+
+gridExtra::grid.arrange(g1,g2)
+
+```
+
+
+Biorąc pod uwagę `Silhouette` dla obu algorytmów liczba klastrów równa 2 okazała się optymalna, jednak dla *K-Means* 5 również było bardzo dobre, gdzie przy *K-Metoids* reszta wypadała bardzo słabo w porównaniu do 2.
+
+#Porównanie klastrów
+
+## K-Means
+
+```{r}
+
+x<-x[,-3]
+kmean <- eclust(x, "kmeans", k = 2, graph = FALSE)
+fviz_cluster(kmean, data = x,
+            show.clust.cent=TRUE,stand=T, geom='point', pointsize = 3,ellipse.type='confidence')
+```
+
+Widać sensowny podział na dwa klastry względem dwóch najbardziej istotnych zmiennych w PCA, chociaż jest on nieintuicyjny.
+
+## K-Metoids
+
+```{r}
+kmean <- eclust(x, "pam", k = 2, graph = FALSE)
+fviz_cluster(kmean, data = x,
+            show.clust.cent=TRUE,stand=T, geom='point', pointsize = 3,ellipse.type='confidence')
+```
+
+Można zauważyć znaczną rozbieżność w wynikach, metoda K-Metoidów rozdzieliła zbiór w podobny sposób, ale w innym miejscu, znacznie oddzielając odległą grupkę.
+
+
+# Szybkość zbieżności
+
+Aby sprawdzić, który algorytm działa szybciej zrobimy benchmark na 100 wywołaniach.
+
+```{r}
+
+knitr::kable(benchmark("K-Means" = {
+           hc <- x %>% eclust("kmeans", k = 2, graph = FALSE)
+          },'K-Metoids'= {
+          hc <- x %>% eclust("pam", k = 2, graph = FALSE)
+          },
+          replications = 100,
+          columns = c("test", "replications", "elapsed",
+                      "relative", "user.self", "sys.self")))
+```
+
+Można zauważyć znaczną wyższość `kmeans` w tym aspekcie.

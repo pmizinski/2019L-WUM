@@ -1,0 +1,144 @@
+---
+title: "Praca domowa #7"
+author: "Małgorzata Wachulec"
+date: "9/6/2019"
+output: 
+  html_document:
+    theme: cerulean
+---
+
+```{r setup, include=FALSE}
+# libraries
+library(factoextra)
+library(NbClust)
+
+set.seed(123, "L'Ecuyer")
+```
+
+## Wstęp 
+
+W tej pracy domowej omówione będą dwie metody klasteryzującji: kmeans i kmedoid na danych iris. Będziemy korzystać z funkcji kmean() z bazowego R i z funkcji pam() z biblioteki cluster. PAM to skrót od Partitioning Around Medoid i jest on uznawany za najpopularniejszy algorytm typu kmedoid.
+
+## Optymalne liczby klastów
+
+Pierwszym problemem, z którym musimy się zmierzyć przy klasteryzacji jest dobranie odpowiedniej liczby klastrów. Do tego celu użyjemy bibliotek factoextra i NbClust oraz funkcji fviz_nbclust(), która pozwala na przekazanie danych i algorytmu klasteryzującego jako argumenty i wyznacza optymalną liczbę klastrów. Wiemy, że możemy wyznaczać optymalną liczbę klastrów m.in. metodą łokcia oraz metodą sylwetki. Wykorzystana funkcja pozwala także na zwizualizowanie wyników obu tych metod, więc zobaczmy, jak to wygląda dla naszych algorytmów.
+
+### Kmeans
+
+```{r kmeans, echo=FALSE}
+dane <- data.frame(iris)[,1:4]
+
+# Elbow method
+fviz_nbclust(dane, kmeans, method = "wss", verbose = FALSE) +
+    geom_vline(xintercept = 4, linetype = 2)+
+  labs(subtitle = "Elbow method")
+
+# Silhouette method
+fviz_nbclust(dane, kmeans, method = "silhouette", verbose = FALSE)+
+  labs(subtitle = "Silhouette method")
+```
+
+Dla metody łokcia optymalna wyznaczona liczba klastrów to 4, choć z rysunku wynika, że mogło by to być także 3. Z kolei z metody sylwetki wynika, że optymalna liczba klastów to 2. Wynika to z natury zbioru danych Iris - gatunek irysów Setosa jest znacznie różny od pozostałych, a gatunki Virginica i Versicolor są do siebie podobne i mają zbliżone długości i szerokości płatków i działek kielicha. To oznacza, że za odpowiednią liczbę klastrów możemy uznać 2, 3 lub 4, w zależności od metody.
+
+### Pam (kmedoid)
+
+```{r pam, echo=FALSE}
+# Elbow method
+fviz_nbclust(dane, cluster::pam, method = "wss", verbose = FALSE) +
+    geom_vline(xintercept = 4, linetype = 2)+
+  labs(subtitle = "Elbow method")
+
+# Silhouette method
+fviz_nbclust(dane, cluster::pam, method = "silhouette", verbose = FALSE)+
+  labs(subtitle = "Silhouette method")
+```
+
+Tak samo jak przy metodzie kmeans, metoda łokcia wskazuje na 3 (widoczne na rysunku) lub 4 (wyznaczone przez funkcję) klastry, a metoda sylwetki na 2 klastry.
+
+## Porównanie klastrów
+
+Choć optymalna liczba klastrów wyznaczona metodą łokcia za pomocą funkcji fviz_nbclust() to 4 klastry, to z wykresu wynika, że równie dobrze mogłoby to być 3. Dodatkowo metoda sylwetki oszacowała tę liczbę na 2, więc spróbujemy zwizualizować za pomocą pca klastry dla kmeans i pam dla 2 i 3 klastrów.
+
+### Kmeans dla 2 klastrów
+```{r kclust, echo=FALSE}
+result_kmeans <- kmeans(dane, 2)
+fviz_cluster(result_kmeans,dane)
+```
+
+Ten podział rozróżnia gatunkek setosa od pozostałych. Dane z gatunku setosa są oznaczone numerami od 1 do 50, co oznacza, że 3 punkty: 58, 94 i 99 są błędnie sklasyfikowane.
+
+### Pam dla 2 klastrów
+```{r pclust, echo=FALSE}
+result_pam <- cluster::pam(dane,2)
+fviz_cluster(result_pam)
+```
+
+Tutaj wyznaczone klastry są podobne, ale jedynie jeden punkt o numerze 99 został błędnie przyporządkowany, czyli klasteryzacja za pomocą pam (kmedoids) jest lepsza od kmeans.
+
+### Kmeans dla 3 klastrów
+```{r kclust3, echo=FALSE}
+result_kmeans3 <- kmeans(dane, 3)
+fviz_cluster(result_kmeans3,dane)
+```
+
+Teraz gatunek setosa jest sklasyfikowany idealnie, natomiast gatunki versicolor (numery 51 - 100) i virginica (numery 101 - 150) są trochę przemieszane.
+
+### Pam dla 3 klastrów
+```{r pclust3, echo=FALSE}
+result_pam3 <- cluster::pam(dane,3)
+fviz_cluster(result_pam3)
+```
+
+Także tu gatunek setosa jest sklasyfikowany idealnie i nie widać większych różnic w pozostałych klastrach - można powiedzieć, że oba algorytmy dają zbliżone rezultaty dla 3 klastrów.
+
+## Porównanie centrów klastrów
+
+### Dla 2 klastrów
+
+Centra wyznaczone przez algorytm kmeans dla 2 klastrów to:
+```{r cenk2, echo=FALSE}
+result_kmeans$centers
+```
+
+A centra wyznaczone przez algorytm pam dla 2 klastrów wynoszą:
+```{r cenp2, echo=FALSE}
+result_pam$medoids
+```
+
+Widać, że centrum drugiego klastra różni się dla tych dwóch metod, dlatego algorytm pam mniej razy błędnie klasteryzował obserwacje gatunku setosa.
+
+### Dla 3 klastrów 
+
+I dla kmeans dla 3 klastrów:
+```{r cenk3, echo=FALSE}
+result_kmeans3$centers
+```
+
+```{r cenp3, echo=FALSE}
+result_pam3$medoids
+```
+
+Centra pierwszego klastra są bardzo podobne, natomiast widać że 2 klaster algorytmu kmeans to 3 klaster w algorytmie pam. Tutaj różnice są większe ale nie widać ich na obrazku - możemy jeszcze porównać wielkości 2 i 3 klastra uzyskanych oba metodami:
+
+```{r cenk, echo=FALSE}
+result_kmeans3$size
+```
+
+```{r cenp, echo=FALSE}
+result_pam3$clusinfo[,1]
+```
+
+Jako, że 2 klaster w kmeans to 3 w pam, a 3 klaster kmeans to 2 w pam, widzimy, że liczność klastrów jest taka sama i są one identyczne. To potwierdza nasze przekonanie, że obie metody radzą sobie równie dobrze dla 3 klastrów.
+
+```{r cen, echo=FALSE, include=FALSE}
+result_pam3$clustering==result_kmeans3$cluster
+```
+
+Niestety funkcja pam() nie zwraca liczby wykonanych iteracji, więc nie dam rady porównać szybkości zbieżności tych dwóch algorytmów, choć liczba iteracji wykonana dla algorytmu kmeans odpowiednio dla 2 i 3 klastrów wynosi:
+
+```{r speed, echo=FALSE}
+result_kmeans$iter
+result_kmeans3$iter
+```
+
+Jako, że są to niewielkie liczby to nie sądzę, by algorytm pam mógł zbiegać szybciej, co najwyżej tak samo szybko, a pewnie wolniej.
