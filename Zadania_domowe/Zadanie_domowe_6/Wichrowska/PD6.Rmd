@@ -1,0 +1,254 @@
+---
+title: "Praca domowa 6"
+author: "Aleksandra Wichrowska"
+date: "4 czerwca 2019"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE)
+library(clv)
+library(clusterCrit)
+library(Gmedian)
+```
+
+# Wstęp
+
+W tym zadaniu domowym dokonam analizy różnych kryteriów oceny jakości klasteryzacji.
+Testy przeprowadziłam na powszechnie znanym zbiorze danych `iris`.
+Domyślnie etykiety zbioru są podzielone na trzy grupy, sprawdzimy, czy taka liczba klastrów okaże się najbardziej optymalna według różnych metryk.
+Testy będę przeprowadzała na liczbie klastrów z zakresu 2-8.
+
+```{r, include = FALSE}
+data <- iris
+X <- data[1:4]
+y <- data[5]
+y <- as.integer(ifelse(y == 'setosa',1, ifelse(y == 'versicolor', 2,3)))
+n <- 2:8
+```
+
+
+```{r, echo=FALSE}
+knitr::kable(table(y),
+             col.names = c("Klasa", "Liczba obserwacji w klasie"),
+             caption = "Liczności klas")
+```
+
+
+Kryteria zewnętrzne (external):
+
+- indeks Huberta
+- indeks Randa
+- indeks Folkesa-Mallowsa
+
+Kryteria wewnętrzne (internal):
+
+- współczynnik Daviesa-Bouldin
+- współczynnik Dunna
+
+
+```{r clustering}
+kmeans_2 <- kmeans(X,centers=2)
+kmeans_3 <- kmeans(X,centers=3)
+kmeans_4 <- kmeans(X,centers=4)
+kmeans_5 <- kmeans(X,centers=5)
+kmeans_6 <- kmeans(X,centers=6)
+kmeans_7 <- kmeans(X,centers=7)
+kmeans_8 <- kmeans(X,centers=8)
+```
+
+```{r clustering2}
+kmedian_2 <- kGmedian(X,ncenters=2)
+kmedian_3 <- kGmedian(X,ncenters=3)
+kmedian_4 <- kGmedian(X,ncenters=4)
+kmedian_5 <- kGmedian(X,ncenters=5)
+kmedian_6 <- kGmedian(X,ncenters=6)
+kmedian_7 <- kGmedian(X,ncenters=7)
+kmedian_8 <- kGmedian(X,ncenters=8)
+```
+
+# Kryteria zewnętrzne
+
+## Indeks Huberta
+
+```{r hubert, ceho=FALSE}    
+hubert_2 <- extCriteria(y,kmeans_2$cluster,"Hubert")
+hubert_3 <- extCriteria(y,kmeans_3$cluster,"Hubert")
+hubert_4 <- extCriteria(y,kmeans_4$cluster,"Hubert")
+hubert_5 <- extCriteria(y,kmeans_5$cluster,"Hubert")
+hubert_6 <- extCriteria(y,kmeans_6$cluster,"Hubert")
+hubert_7 <- extCriteria(y,kmeans_7$cluster,"Hubert")
+hubert_8 <- extCriteria(y,kmeans_8$cluster,"Hubert")
+
+
+wyniki_hubert <- c(hubert_2, hubert_3, hubert_4, hubert_5, hubert_6, hubert_7, hubert_8)
+plot(n, wyniki_hubert,type = "l", ylab = "Hubert", xlab = "Liczba klastrow", main = "Indeks Huberta w zależności od liczby klastrow dla k-means")
+```
+
+```{r hubert2, ceho=FALSE}    
+hubert_22 <- extCriteria(y,as.integer(kmedian_2$cluster),"Hubert")
+hubert_32 <- extCriteria(y,as.integer(kmedian_3$cluster),"Hubert")
+hubert_42 <- extCriteria(y,as.integer(kmedian_4$cluster),"Hubert")
+hubert_52 <- extCriteria(y,as.integer(kmedian_5$cluster),"Hubert")
+hubert_62 <- extCriteria(y,as.integer(kmedian_6$cluster),"Hubert")
+hubert_72 <- extCriteria(y,as.integer(kmedian_7$cluster),"Hubert")
+hubert_82 <- extCriteria(y,as.integer(kmedian_8$cluster),"Hubert")
+
+
+wyniki_hubert <- c(hubert_22, hubert_32, hubert_42, hubert_52, hubert_62, hubert_72, hubert_82)
+plot(n, wyniki_hubert,type = "l", ylab = "Hubert", xlab = "Liczba klastrow", main = "Indeks Huberta w zależności od liczby klastrow k-median")
+```
+
+*Wniosek:*
+
+Jak widać dla obu alogrytmów indeks Huberta osiąga maksymalną wartość dla trzech klastrów - czyli tylu na ile rzeczywiście jest podzielone zbiór `iris`.
+
+
+## Indeks Randa
+```{r Rand, ceho=FALSE}    
+rand_2 <- extCriteria(y,kmeans_2$cluster,"Rand")
+rand_3 <- extCriteria(y,kmeans_3$cluster,"Rand")
+rand_4 <- extCriteria(y,kmeans_4$cluster,"Rand")
+rand_5 <- extCriteria(y,kmeans_5$cluster,"Rand")
+rand_6 <- extCriteria(y,kmeans_6$cluster,"Rand")
+rand_7 <- extCriteria(y,kmeans_7$cluster,"Rand")
+rand_8 <- extCriteria(y,kmeans_8$cluster,"Rand")
+
+wyniki_rand <- c(rand_2, rand_3, rand_4, rand_5, rand_6, rand_7, rand_8)
+plot(n, wyniki_rand,type = "l", ylab = "Rand", xlab = "Liczba klastrow", main = "Indeks Randa w zależności od liczby klastrów dla k-means")
+```
+
+
+```{r Rand2 , ceho=FALSE}    
+rand_22 <- extCriteria(y,as.integer(kmedian_2$cluster),"Rand")
+rand_32 <- extCriteria(y,as.integer(kmedian_3$cluster),"Rand")
+rand_42 <- extCriteria(y,as.integer(kmedian_4$cluster),"Rand")
+rand_52 <- extCriteria(y,as.integer(kmedian_5$cluster),"Rand")
+rand_62 <- extCriteria(y,as.integer(kmedian_6$cluster),"Rand")
+rand_72 <- extCriteria(y,as.integer(kmedian_7$cluster),"Rand")
+rand_82 <- extCriteria(y,as.integer(kmedian_8$cluster),"Rand")
+
+wyniki_rand <- c(rand_22, rand_32, rand_42, rand_52, rand_62, rand_72, rand_82)
+plot(n, wyniki_rand,type = "l", ylab = "Rand", xlab = "Liczba klastrow", main = "Indeks Randa w zależności od liczby klastrów dla k-median")
+```
+
+*Wniosek:*
+
+Podobnie indeks Randa, maksymalizuje się dla trzech klastrów.
+
+
+# Kryteria wewnętrzne
+
+## Indeks Dunn'a
+
+```{r dunn_index, echo=FALSE}
+dunn_2 <- intCriteria(as.matrix(X),kmeans_2$cluster,"Dunn")
+dunn_3 <- intCriteria(as.matrix(X),kmeans_3$cluster,"Dunn")
+dunn_4 <- intCriteria(as.matrix(X),kmeans_4$cluster,"Dunn")
+dunn_5 <- intCriteria(as.matrix(X),kmeans_5$cluster,"Dunn")
+dunn_6 <- intCriteria(as.matrix(X),kmeans_6$cluster,"Dunn")
+dunn_7 <- intCriteria(as.matrix(X),kmeans_7$cluster,"Dunn")
+dunn_8 <- intCriteria(as.matrix(X),kmeans_8$cluster,"Dunn")
+
+wyniki_dunn <- c(dunn_2, dunn_3, dunn_4, dunn_5, dunn_6, dunn_7, dunn_8)
+
+plot(n, wyniki_dunn,type = "l", ylab = "Dunn", xlab = "Liczba klastrow", main = "Indeks Dunna w zależności od liczby klastrów dla k-means")
+```
+
+```{r dunn_index2, echo=FALSE}
+dunn_22 <- intCriteria(as.matrix(X),as.integer(kmedian_2$cluster),"Dunn")
+dunn_32 <- intCriteria(as.matrix(X),as.integer(kmedian_3$cluster),"Dunn")
+dunn_42 <- intCriteria(as.matrix(X),as.integer(kmedian_4$cluster),"Dunn")
+dunn_52 <- intCriteria(as.matrix(X),as.integer(kmedian_5$cluster),"Dunn")
+dunn_62 <- intCriteria(as.matrix(X),as.integer(kmedian_6$cluster),"Dunn")
+dunn_72 <- intCriteria(as.matrix(X),as.integer(kmedian_7$cluster),"Dunn")
+dunn_82 <- intCriteria(as.matrix(X),as.integer(kmedian_8$cluster),"Dunn")
+
+wyniki_dunn <- c(dunn_22, dunn_32, dunn_42, dunn_52, dunn_62, dunn_72, dunn_82)
+
+plot(n, wyniki_dunn,type = "l", ylab = "Dunn", xlab = "Liczba klastrow", main = "Indeks Dunna w zależności od liczby klastrów dla k-median")
+```
+
+*Wniosek:*
+
+Optymalnej liczby klastrów możemy też szukać przez maksymalizację indeksu Dunna'a - dla naszych danych i obu algorytmów to 4 klastry.
+
+## Indeks Daviesa-Bouldina
+
+```{r db_index, echo=FALSE}
+db_2 <- intCriteria(as.matrix(X),kmeans_2$cluster,"Davies_Bouldin")
+db_3 <- intCriteria(as.matrix(X),kmeans_3$cluster,"Davies_Bouldin")
+db_4 <- intCriteria(as.matrix(X),kmeans_4$cluster,"Davies_Bouldin")
+db_5 <- intCriteria(as.matrix(X),kmeans_5$cluster,"Davies_Bouldin")
+db_6 <- intCriteria(as.matrix(X),kmeans_6$cluster,"Davies_Bouldin")
+db_7 <- intCriteria(as.matrix(X),kmeans_7$cluster,"Davies_Bouldin")
+db_8 <- intCriteria(as.matrix(X),kmeans_8$cluster,"Davies_Bouldin")
+
+wyniki_db <- c(db_2, db_3, db_4, db_5, db_6, db_7, db_8)
+
+
+plot(n, wyniki_db,type = "l", ylab = "Davies-Bouldin", xlab = "Liczba klastrow", main = "Indeks Daviesa-Bouldina w zależności od liczby klastrów dla k-means")
+```
+
+```{r db_index2, echo=FALSE}
+db_2 <- intCriteria(as.matrix(X),as.integer(kmedian_2$cluster),"Davies_Bouldin")
+db_3 <- intCriteria(as.matrix(X),as.integer(kmedian_3$cluster),"Davies_Bouldin")
+db_4 <- intCriteria(as.matrix(X),as.integer(kmedian_4$cluster),"Davies_Bouldin")
+db_5 <- intCriteria(as.matrix(X),as.integer(kmedian_5$cluster),"Davies_Bouldin")
+db_6 <- intCriteria(as.matrix(X),as.integer(kmedian_6$cluster),"Davies_Bouldin")
+db_7 <- intCriteria(as.matrix(X),as.integer(kmedian_7$cluster),"Davies_Bouldin")
+db_8 <- intCriteria(as.matrix(X),as.integer(kmedian_8$cluster),"Davies_Bouldin")
+
+wyniki_db <- c(db_2, db_3, db_4, db_5, db_6, db_7, db_8)
+
+
+plot(n, wyniki_db,type = "l", ylab = "Davies-Bouldin", xlab = "Liczba klastrow", main = "Indeks Daviesa-Bouldina w zależności od liczby klastrów dla k-median")
+```
+
+*Wniosek:*
+
+Z kolei indeks Daviesa-Bouldina powinien być minimalizowany - według wykresw za optymalną liczbę klastrów powinniśmy przyjać 2.
+
+
+## Współczynnik Silhouette 
+
+```{r solhouette, echo=FALSE}
+silhouette_2 <- intCriteria(as.matrix(X),kmeans_2$cluster,"Silhouette")
+silhouette_3 <- intCriteria(as.matrix(X),kmeans_3$cluster,"Silhouette")
+silhouette_4 <- intCriteria(as.matrix(X),kmeans_4$cluster,"Silhouette")
+silhouette_5 <- intCriteria(as.matrix(X),kmeans_5$cluster,"Silhouette")
+silhouette_6 <- intCriteria(as.matrix(X),kmeans_6$cluster,"Silhouette")
+silhouette_7 <- intCriteria(as.matrix(X),kmeans_7$cluster,"Silhouette")
+silhouette_8 <- intCriteria(as.matrix(X),kmeans_8$cluster,"Silhouette")
+
+wyniki_db <- c(silhouette_2, silhouette_3, silhouette_4, silhouette_5, silhouette_6, silhouette_7, silhouette_8)
+
+
+plot(n, wyniki_db,type = "l", ylab = "Silhouette", xlab = "Liczba klastrow", main = "Indeks Silhouette w zależności od liczby klastrów dla k-means")
+```
+
+
+```{r silhouette2, echo=FALSE}
+silhouette_2 <- intCriteria(as.matrix(X),as.integer(kmedian_2$cluster),"Silhouette")
+silhouette_3 <- intCriteria(as.matrix(X),as.integer(kmedian_3$cluster),"Silhouette")
+silhouette_4 <- intCriteria(as.matrix(X),as.integer(kmedian_4$cluster),"Silhouette")
+silhouette_5 <- intCriteria(as.matrix(X),as.integer(kmedian_5$cluster),"Silhouette")
+silhouette_6 <- intCriteria(as.matrix(X),as.integer(kmedian_6$cluster),"Silhouette")
+silhouette_7 <- intCriteria(as.matrix(X),as.integer(kmedian_7$cluster),"Silhouette")
+silhouette_8 <- intCriteria(as.matrix(X),as.integer(kmedian_8$cluster),"Silhouette")
+
+wyniki_db <- c(silhouette_2, silhouette_3, silhouette_4, silhouette_5, silhouette_6, silhouette_7, silhouette_8)
+
+
+plot(n, wyniki_db,type = "l", ylab = "Silhouette", xlab = "Liczba klastrow", main = "Indeks Silhouette w zależności od liczby klastrów dla k-median")
+```
+
+
+*Wniosek:*
+
+Dla dobrze podzielonych klastrów współczynnik solhouette powinien być jak najbliżej 1, więc optymalna liczba klastrów dla tych algorytmów to 2. 
+
+# Podsumowanie
+Pracowałam na zbiorze, który domyślnie jest podzielony na 3 klastry.
+
+Korzystając z róznych kryteriów oceny jakości klasteryzacji, zarówno wewnętrznych jak i zewnętrznych, otrzymaliśmy wnioski, że optymalna liczba klastrów to 2, 3 lub 4. Wynik 2 jest uzasadniony, ponieważ dwa z trzech gatunków kwiatów zawartych w zbiorze iris są do siebie bardzo podobne, a trzeci jest znacząco inny.
