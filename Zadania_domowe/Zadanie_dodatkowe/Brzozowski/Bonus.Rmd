@@ -1,0 +1,96 @@
+---
+title: "Zadanie bonusowe"
+author: "Łukasz Brzozowski"
+date: "`r format(Sys.time(), '%d - %m - %Y')`"
+output:
+  html_document:
+    df_print: paged
+    toc: true
+    toc_float: true
+    code_folding: hide
+    number_sections: true
+---
+```{r setup, include=FALSE}
+library(ggplot2)
+library(dplyr)
+library(mlr)
+library(reshape)
+```
+# Wykres `chol` od `thal`
+
+Wykres ma na celu przedstawienie zależności `chol` od dwóch zmiennych: `thal` - zmiennej dyskretnej oraz `trestbps` - zmiennej ciągłej. Postanowiłem zdyskretyzować zmienną `tresbps` i przy pomocy mapy ciepła przedstawić średnią wartość `chol` w każdej komórce.
+```{r}
+dat <- read.csv("heart.csv")
+colnames(dat)[1] <- "age"
+
+datT <-  dat %>% group_by(thal, cut(dat$trestbps, breaks = 10)) %>% mutate(mean(chol))
+datT <- datT %>% select(-chol)
+
+colnames(datT)[(length(colnames(datT))-1):length(colnames(datT))] <- c("bins", "chol")
+
+ggplot(data = datT, aes(x = thal, y = bins)) +
+  geom_tile(aes(fill = chol))  +
+  scale_fill_gradient(low="lightgreen", high="red", guide="colorbar") +
+  ylab("trestbps") +
+  ggtitle("Correlation between cholesterol and tresbps and thal")
+```
+
+# Wykres odwiedzin w zależności od płci i wieku
+
+Jako że wykres ma służyć wyłącznie porównawczo do określenia stosunku dziewczynek do chłopców w danych grupach, a liczba obserwacji jest mała, możemy użyć zwykłego wykresu punktowego.
+
+```{r}
+dat <- readxl::read_xlsx("01B Po osobach - nowe.xlsx")
+
+dat <- dat[,c("D1", "D2", "P1")]
+dat$D1 <- ifelse(dat$D1 ==1, "Chłopcy", "Dziewczynki")
+dat <- as.data.frame(dat)
+
+
+colnames(dat) <- c("Plec", "Rok", "Liczba")
+ggplot(data = dat, aes(x = as.factor(Liczba), y = as.factor(Rok), col = Plec)) + geom_jitter(width = 0.05, size = 2.5) +
+  xlab("Liczba odwiedzin") +
+  ylab("Rok urodzenia") +
+  ggtitle("Wizyty dzieci w CNK") +
+  theme_minimal()
+```
+
+# Boxploty
+
+Do analizowania liczności sprzedaży w czasie wygodne będą violinploty, które pokażą trendy.
+
+```{r, fig.width=8, fig.height=14}
+allegro <- read.csv2("allegro-api-transactions.csv", sep = ",")
+allegro <- allegro[,c("date", "main_category")]
+allegro$date <- lubridate::as_datetime(allegro$date)
+ggplot(data = allegro, aes(x = main_category, y = date)) +
+  geom_violin() + 
+  xlab("Data") +
+  ylab("Kategoria") +
+  ggtitle("Sprzedaż produktów z danych kategorii w czasie") +
+  coord_flip() 
+```
+
+# Analiza symetrii
+
+Możemy sprawdzić symetrię zmiennych poprzez obliczenie współczynnika skośności dla każdej kolumny, a następnie wybrania tych, które co do modułu przekraczają ustalony threshold. Przykładowa funkcja poniżej. Zwraca ona macierz zawierającą w pierwszej kolumnie indeksy skośnych kolumn, a w drugiej ich skośność.
+
+```{r}
+checkSymmetry <- function(x, thresh = 0.1){
+  stopifnot(is.data.frame(x))
+  temp <- t(x)
+  Z <- matrix(ncol = 2, nrow = 0)
+  for(i in 1:nrow(temp)){
+    v <- temp[i]
+    if(is.numeric(v)){
+    uniqv <- unique(v)
+    md <- uniqv[which.max(tabulate(match(v, uniqv)))]
+    A <- mean(v-md)/sd(v)
+    if(abs(A) > thresh){
+    Z <- rbind(Z, c(i, v))
+    }
+    }
+  }
+  Z
+}
+```

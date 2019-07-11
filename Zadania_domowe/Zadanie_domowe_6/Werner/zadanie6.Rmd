@@ -1,0 +1,92 @@
+---
+title: "Zadanie 6"
+author: "Olaf Werner"
+date: "May 19, 2019"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(cluster)
+library(mclust)
+library(ggplot2)
+library(clues)
+library(reshape2)
+library(kableExtra)
+
+zbior<-read.csv("g2-2-100.data",header = FALSE,sep = " ")
+etykiety<-read.csv("g2-2-100.labels",header = FALSE,sep = " ")
+
+zbior<-scale(zbior)
+d <- dist(zbior, method = "euclidean") # distance matrix
+```
+
+
+#Opis zbioru danych
+```{r}
+dim(zbior)
+```
+
+Nasz zbior ma dwa wymiary i są tam dwa klastry Gausowskie. Znamy etykiety zbioru ktore sa w ramce danych etykiety.
+
+```{r echo=FALSE}
+clusplot(zbior, etykiety$V1, color=TRUE, shade=TRUE, lines=0,main ="Oryginalny zbior",xlab = "",ylab = "",sub = "" )
+```
+
+
+#Nasze metody
+```{r}
+ksrednie<-lapply(2:5,function(x){srednia<-kmeans(zbior,x,nstart = 25);srednia$cluster})
+statystyki<-sapply(ksrednie, function(x){adjustedRand(x,etykiety$V1,c("Rand", "HA", "FM", "Jaccard"))})
+ksrednie_stat<-data.frame(t(statystyki))
+
+ward <- hclust(d, method="ward.D2")
+ward<-lapply(2:5,function(x){srednia<-cutree(ward, k=x)})
+statystyki<-sapply(ward, function(x){adjustedRand(x,etykiety$V1,c("Rand", "HA", "FM", "Jaccard"))})
+ward_stat<-data.frame(t(statystyki))
+```
+
+Użyjemy dwóch metod klasteringu, pierwszą będzie k-średnich, a drugą hierarchiczny Warda. 
+
+
+#Porownanie metod
+```{r echo=FALSE}
+clusplot(zbior, ksrednie[[1]], color=TRUE, shade=TRUE, lines=0,main ="K-srednie",xlab = "",ylab = "",sub = "" )
+
+clusplot(zbior, ward[[1]], color=TRUE, shade=TRUE, lines=0,main ="Ward",xlab = "",ylab = "",sub = "" )
+```
+
+Jak widzimy żadna z metod nie daje takiego pokrycia jak oryginalny.
+
+#Statystyki zewnetrzne
+```{r echo=FALSE}
+ksrednie_stat$metoda<-"k-srednie"
+ward_stat$metoda<-"Ward"
+ksrednie_stat$liczba_klastrow<-2:5
+ward_stat$liczba_klastrow<-2:5
+
+ksrednie_stat<-melt(ksrednie_stat,id.vars = c("metoda","liczba_klastrow"))
+ward_stat<-melt(ward_stat,id.vars = c("metoda","liczba_klastrow"))
+stat<-rbind(ksrednie_stat,ward_stat)
+stat$metoda<-as.factor(stat$metoda)
+ggplot(data = stat,aes(x=liczba_klastrow,y=value,color=metoda,group=metoda))+geom_line()+facet_grid(. ~ variable)
+```
+
+FM to skrót od indeks Fowlkesa i Mallowsa, a HA to skorygowany indeks Huberta i Arabiego.
+
+#Statystyki wewnetrzne(sylwetka)
+
+```{r echo=FALSE}
+syl_ward<-clues::get_Silhouette(zbior,ward[[1]])
+syl_ksrednie<-clues::get_Silhouette(zbior,ksrednie[[1]])
+kable(data.frame(Ward=syl_ward$avg.s,ksrednie=syl_ksrednie$avg.s),digits = 4,align = c("l","r"),"html") %>%
+  kable_styling(full_width = F)
+
+
+
+```
+
+
+#Wnioski
+Indeksy Randa oraz Fowlkesa i Mallowsa dawały zdecydowanie lepsze rezultaty ponieważ
+bardzej zwracaja uwagę na SS i DD (SS to pary w tej samej grupie i klastrze, DD to pary w roznych grupach i roznych klastrach). Poza tym w przypadku 2 klastrow metoda k-srednich okazala sie lepsza od hierarchicznej metody Warda, ale im wieksza ona byla tym lepsza okazywala sie metoda Warda.

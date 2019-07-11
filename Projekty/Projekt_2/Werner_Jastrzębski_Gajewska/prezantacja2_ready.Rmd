@@ -1,0 +1,300 @@
+---
+title: Prezantacja 2
+author: Bogdan Jastrzębski, Olaf Werner, Joanna Gajewska
+date: "4 czerwca 2019 - "
+output: 
+  html_document:
+    toc: true
+    number_sections: true
+    toc_float: true
+    theme: "paper"
+---
+
+# Wstęp 
+
+Niniejsza praca opisuje analizę unsupervised ramki "Po Osobach" w podziale na podzbiory. 
+
+# Motywacja
+
+Dane w naszej ramce są logicznie podzielone. Część kolumn dotyczy np. tylko odpowiedzi dzieci, inne dotyczą odpowiedzi dorosłych w ankiecie, inne znowu dotyczą danych demograficznych itd. Analiza pewnego zbioru ma odpowiedzieć nam na pytanie, jakie są zależności 
+między kolumnami tych grup.
+
+Zaproponowaliśmy uproszczoną analizę, która ma wykazywać związki między całymi grupami.
+
+# Schemat testu
+
+Test polega na:
+
+- podzieleniu zbioru na podzbiory kolumn
+- znalezieniu klas
+- sprawdzeniu za pomocą testu $\chi^2$, czy dane klasy są ze sobą powiązane
+
+# Podzbiory
+
+Oto nasze podzbiory:
+
+##Dataset P
+ odpowiedzi na pytania skierowane do opiekunów, odnośnie ich oczekiwań co do wystawy i tego jak dziecko się zachowywało podczas zwiedzania.
+
+##Dataset M
+ dane dotyczące opiekuna, wiek, miejsce zamieszkania, wykształcenie, płeć.
+
+##Dataset D
+ dane dotyczące dziecka, wiek, płeć, relacja opiekun-dziecko
+
+##Dataset EAS_r 
+ charakterystyka cech temperamentu
+
+##Dataset Eas_rest
+ opisują emocjonalnosć , towarzyskość, aktywność, nieśmiałość dziecka
+
+##Dataset R
+ pytania skierowane do opiekuna odnośnie wrażeń po wystawie, o tym jak dziecko się zachowywało podczas zwiedzania, uwagi
+
+
+
+
+# Znalezienie klas
+
+Do klasteryzacji wykorzystaliśmy algorytm hclust2. Oto drzewa dla naszych podzbiorów:
+
+```{r, echo=FALSE, out.width = "500px", out.height= "360px"}
+knitr::include_graphics("all_trees.png")
+```
+
+
+Na podstawie tych drzew dokonaliśmy podziału zbioru. 
+
+# Test $\chi^2$ w skrócie
+
+Zakładamy, że nasze dwie zmienne kategoryczne są niezależne ($h_0$). Naszą hipotezą alternatywną jest to, że zmienne nie są niezależne ($h_1$). Przykładowo mamy:
+
+
+|       | A | B | Total |
+|-------|---|---|-------|
+| 1     | 10 | 20 | 30    |
+| 2     | 90 | 70 | 160   |
+| Total | 100 | 90 | 190   |
+
+Jeżeli zmienne są niezależne, to można ustalić na podstawie rozkładów brzegowych rokład ogólny.
+Np. w A1 powinno być: 
+
+$$\frac{30\cdot100}{190} \approx 15.789$$
+
+To jest nasza wartość oczekiwana. 
+Teraz dla każdej komórki obliczamy:
+
+$$\frac{(observed - expected)^2}{expected}$$
+
+a następnie sumujemy i ta suma jest naszą statystyką testową. $h_0$ zakłada, że statystyka ta ma dążyć do $0$.
+Teraz po schemacie liczymy p-value etc. i odrzucamy hipotezę alternatywną, albo nie.
+
+Będziemy znajdować takie pary etykiet, dla których statystyka jest duża, a p-value jest małe.
+
+# Efekty testu $\chi^2$
+
+```{r, echo=FALSE}
+load("ChisqTestMatrix.rda")
+library(lattice)
+library(gridExtra)
+Chisq_n <- Chisq
+diag(Chisq_n) <- 0
+p1 <- levelplot(Chisq_n)
+p2 <- levelplot(Chisq_p)
+grid.arrange(p1,p2,nrow=1)
+```
+
+Interpretacja:
+
+Jak widać dla pewnych podzbiorów osiągamy dużą wartość statystyki dla małych p, mianowicie dla:
+
+- R i P
+- EASr i EASrest
+
+
+**R i P**
+
+Duże powiązanie zmiennych R i P jest oczywiste. Wynika to z tego, iż w pierwszym jak i w drugim zbiorze mamy do czynienia z odpowiedziami opiekunów na pytania związane z :
+
+- ich oczekiwaniami odnośnie wystawy
+
+- zachowaniem dzieci podczas zwiedzania
+
+- wrażeniami po wystawie
+
+Różnica między zbiorami :
+
+- dla zbioru  P odpowedzi były zbierane przed i w trakcie wycieczki
+
+- zbiór R był stworzony na podstawie pytań po zakoczeniu wizyty
+
+
+
+**EASr i EASrest**
+
+Oba datasety dotyczą charakterystyki cech temperamentu, tyle, że są przedstawione w nieco inny sposób. Zatem powiązanie między nimi jest naturalne.
+
+
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(cluster)
+library(mclust)
+library(ggplot2)
+library(clues)
+library(reshape2)
+library(kableExtra)
+library(clusterCrit)
+library(readxl)
+library(dplyr)
+
+wycieczki <- read_xlsx("bazy_danych/01A Obserwacje_nowe.xlsx")
+osoby <- read_xlsx("bazy_danych/01B Po osobach - nowe.xlsx")
+
+osoby %>% select(Nr,
+                 P1,
+                 P2,
+                 P3_7,
+                 P3_8,
+                 P3_9,
+                 P3_10,
+                 P4_1,
+                 P4_2,
+                 P4_3,
+                 P4_4,
+                 P4_5,
+                 P4_6,
+                 P4_7,
+                 P4_7,
+                 P4_8,
+                 M4,
+                 M4a,
+                 D1,
+                 D2,
+                 EAS_EMO,
+                 EAS_AKTYW,
+                 EAS_TOW,
+                 EAS_NIESM,
+                 D2.1,
+                 D2.3,
+                 D2.6,
+                 D2.7,
+                 D2.5,
+                 D2.10) -> dzieci
+
+colnames(wycieczki)[10] <- "D_zmeczenie"
+colnames(wycieczki)[21] <- "D_wola"
+colnames(wycieczki)[27] <- "D_uzywa"
+
+wycieczki %>% 
+  group_by(ID) %>% 
+  summarise(
+    D_nastroj_srednia = mean(D_nastroj,  na.rm = TRUE),
+    D_zmeczenie_pocz = head(D_zmeczenie, 1),
+    D_zmeczenie_koniec = tail(D_zmeczenie, 1),
+    kroki_L = ifelse(max(kroki_L, na.rm = TRUE) == -Inf, max(kroki_P, na.rm = TRUE), max(kroki_L, na.rm = TRUE)),
+    kroki_P = ifelse(max(kroki_P, na.rm = TRUE) == -Inf, max(kroki_L, na.rm = TRUE), max(kroki_P, na.rm = TRUE)),
+    D_wola = sum(D_wola,  na.rm = TRUE),
+    D_pyta = sum(D_pyta,  na.rm = TRUE),
+    D_dotyka = sum(D_dotyka,  na.rm = TRUE),
+    D_uzywa = sum(D_uzywa,  na.rm = TRUE),
+    D_długość_wyc = max(Nastr_kiedy,  na.rm = TRUE) - min(Nastr_kiedy,  na.rm = TRUE),
+    liczba_eksponatow = length(unique(`Nazwa eksponatu`)) - 1
+  ) -> wycieczki_pro
+
+wycieczki_pro$D_długość_wyc %>% as.numeric * 60 -> wycieczki_pro$D_długość_wyc
+
+inner_join(dzieci, wycieczki_pro, by=c("Nr" = "ID")) -> ramkaPro
+
+ramkaPro$krokow_na_minute<-(ramkaPro$kroki_L+ramkaPro$kroki_P)/ramkaPro$D_długość_wyc
+
+#plot_missing(ramkaPro)
+
+#which(is.na(ramkaPro$D_zmeczenie_koniec))
+
+#zamiast ankiety pod koniec bylo jakies inne wydarzenie
+ramkaPro[51,"D_zmeczenie_koniec"]<-2
+
+
+zbior<-ramkaPro[-1]
+zbior<-scale(zbior)
+# Klasteryzacja hclust2
+
+library(genie)
+
+d <- ramkaPro[-1] %>% data.matrix()%>% scale() %>% dist
+
+ksrednie<-lapply(2:20,function(x){srednia<-kmeans(zbior,x,nstart = 25);srednia$cluster})
+
+i <- lapply(1:19,function(n){intCriteria(zbior, ksrednie[[n]], c("Gamma", "Davies_Bouldin", "Dunn"))})
+
+xd<-data.frame(do.call(rbind, i))
+
+xd<-cbind(xd,k=2:20)
+
+xd$gamma<-as.numeric(xd$gamma)
+xd$dunn<-as.numeric(xd$dunn)
+xd$davies_bouldin<-as.numeric(xd$davies_bouldin)
+
+
+
+#sugerowana liczba klastrow to 2 oraz 5
+
+
+#pca
+
+zbior.pca<-prcomp(zbior)
+plot(zbior.pca)
+summary(zbior.pca)
+rot<-zbior.pca$rotation
+rot<-data.frame(abs(rot))
+
+p1<-rownames(head(rot[order(rot[1],decreasing = TRUE),],10))
+
+p2<-rownames(head(rot[order(rot[2],decreasing = TRUE),],10))
+```
+
+# Dataset - Dzieci
+Chcielismy badac dzieci więc z zbioru danych wybralismy dane bezposrednio o dzieciach i polaczylismy je ze soba w ten sposob otrzymalismy dane o kazdym z dziecku na temat tego jak zachowywalo sie na wycieczce i jakie mialo testy psychologiczne. Jedna z metod która uzilismy do grupowania dzieci bylo metoda k srednich
+
+```{r echo=FALSE}
+library(ggplot2)
+
+ggplot() +
+  geom_line(data = xd, aes(y = gamma, x = k, color = 'gamma')) +
+  geom_line(data = xd, aes(y = dunn, x = k, color = 'dunn')) +
+  geom_line(data = xd, aes(y = davies_bouldin, x = k, color = 'davies_bouldin'))+labs(y="")+
+  scale_color_manual(name = "Colors", values = c("davies_bouldin" = "blue", "gamma" = "red","dunn"="green"))
+
+
+```
+Jak widzimy z wykresu najbardziej sensowna liczba na klasteryzacje okazala sie 20 ale z powodu tego ze nasz zbior liczy tylko 69 dzieci to wzielismy 2 dla metody k srednich
+
+```{r echo=FALSE}
+clusplot(zbior, ksrednie[[1]], color=TRUE, shade=TRUE, lines=0,main = "" )
+
+```
+
+Mimo wyjasniania tylko 24 procent wariancji to nawet na oko zbiory sa latwo rozdzielane
+
+
+#czym sa komponenty?
+uzylismy PCA i na podstawie macierzy rotacji zindentyfikowalismy najwazniejsze zmienne wchodzace w sklad kazdego z dwoch pierwszych wektorow
+
+```{r}
+p1
+p2
+```
+
+Po zapoznaniu sie z legenda pierwszy wektor dotyczy psychiki dziecka, a drugi jego aktywnosci
+
+```{r echo=FALSE, warning=FALSE}
+ggplot(data = ramkaPro)+geom_smooth(aes(x=EAS_AKTYW,y=krokow_na_minute))
+```
+
+jest tendencja wzrostowa ale z powodu malej ilosci danych i mozliwych bledow w krokomierzach jest duzo niepewnosc
+
+
+
+
+

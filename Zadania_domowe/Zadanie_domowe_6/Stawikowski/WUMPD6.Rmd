@@ -1,0 +1,352 @@
+---
+title: "Statystyki walidacji klastrów"
+author: "Micha³ Stawikowski"
+date: "`r format(Sys.time(), '%d - %m - %Y')`"
+output:
+  html_document:
+    df_print: paged
+    toc: true
+    toc_float: true
+    code_folding: hide
+    number_sections: true
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+
+library(caret)
+library(forcats)
+library("dplyr")
+# Wczytywanie
+set.seed(1)
+
+data <- readr::read_csv("heart.csv")
+data <- select(data, -target)
+library("cluster")
+library("magrittr")
+library("NbClust")
+library("factoextra")
+library("fpc")
+library("dbscan")
+library(ClusterR)
+
+
+
+finalData <- data %>% na.omit() %>% scale()
+Data <- data.frame(finalData)
+
+```
+
+# Wprowadzenie
+
+Celem raportu jest przedstawienie ró¿nych statystyk walidacji klastrów. Grupowanie obserwacji przeprowadzaæ bêdê na zbiorze `Heart Disease UCI`, który zawiera dane na temat chorób serca u pacjentów. Docelowo zbiór bêdziemy chcieli podzieliæ na pacjentów chorych i zdrowych, lub ze wzglêdu na rodzaj choroby. Do klastrowania wykorzystamy cztery algorytmy:
+
+* `Kmeans`
+
+* dwa algorytmy z grupy `Agglomeration methods`:
+    + `Centroid`
+    + `Ward`
+    
+* oraz algorytm z grupy `EM`:
+    + `Gaussian Mixture Models`
+
+# Statystyki walidacji - internal criteria
+
+Do wybierania odpowiedniej liczby klastrów dla zbioru i metody grupowania, bêdziemy u¿ywaæ wybranych statystyk podanych w [artykule](https://www.researchgate.net/publication/2500099_On_Clustering_Validation_Techniques):
+
+* `Hubert` (modified) statistic
+* `The Davies-Bouldin (DB) index`
+* `Dunn index`
+
+oraz innych omówionych na wyk³adzie, takich jak:
+
+* `Elbow method`
+* `Silhouette method`
+* `Gap statistic method`
+
+Korzysta³ bêdê z implementacji z pakietu `NBClust`.
+
+## Kmeans
+
+### Pojedyncze metody
+
+####Hubert
+
+
+```{r warning=FALSE, message=FALSE, comment=FALSE, prompt=FALSE, echo = FALSE}
+set.seed(1)
+res.nbclust <- Data %>%
+  NbClust(distance = "euclidean",
+          min.nc = 2, max.nc = 10, 
+          method = "kmeans", index ="hubert") 
+
+```
+`Hubert` index jest metod¹ graficzn¹ i najlepsz¹ liczbê klastrów wybieramy na podstawie `kolana` wystêpuj¹cego na drugim wykresie, który prezentuje albo gwa³towny wzrost wartoœci albo gwa³towny spadek. W tym wypadku widzimy praktycznie pionow¹ liniê w punkcie 4 - to optymalna liczba klastrów wybrana przez ten algorytm.
+
+#### The Davies-Bouldin index
+
+```{r}
+set.seed(1)
+res.nbclust <- Data %>%
+  NbClust(distance = "euclidean",
+          min.nc = 2, max.nc = 10, 
+          method = "kmeans", index ="db") 
+res.nbclust$Best.nc
+```
+Index `DB` jako optymaln¹ wartoœæ wybra³ 10 klastrów.
+
+#### Statystka Dunna
+
+```{r}
+res.nbclust <- Data %>%
+  NbClust(distance = "euclidean",
+          min.nc = 2, max.nc = 10, 
+          method = "kmeans", index ="dunn") 
+res.nbclust$Best.nc
+```
+
+Na 4 klastry zdecydowa³ siê algorytm `Dunna`.
+
+#### Elbow method
+
+```{r}
+# Elbow method
+fviz_nbclust(Data, kmeans, method = "wss") +
+    geom_vline(xintercept = 4, linetype = 2)+
+  labs(subtitle = "Elbow method")
+```
+
+Metoda `Elbow` - 4 klastry.
+
+#### Silhouette method
+
+```{r warning=FALSE}
+# Silhouette method
+fviz_nbclust(Data, kmeans, method = "silhouette")+
+  labs(subtitle = "Silhouette method")
+```
+
+```{r}
+res.hc4 <- Data %>% 
+  eclust("hclust", k = 2, graph = FALSE)
+fviz_silhouette(res.hc4)
+
+res.hc4 <- Data %>% 
+  eclust("hclust", k = 4, graph = FALSE)
+fviz_silhouette(res.hc4)
+```
+
+`Silhouette method` - Metody bada, czy obserwacje w klastrach s¹ podobne do siebie, na podstawie odleg³oœci lub innych metryk i na podstawie tego ka¿dej obserwacji przydziela wartoœæ `Sillhouette width` - od -1 do 1. Czym wiêksza wartoœæ tym obserwacja lepiej pasuje do swojego klastra. Na podstawie ca³ego zbioru liczy siê œrednie `Sillhouette width` i na podstawie tego wybiera optymaln¹ liczbê klastrów. Na powy¿szym wykresie mo¿emy zobaczyæ jak prezentuj¹ siê te wartoœci dla liczby klastróW: 2 oraz 4. Jak widaæ 2 osi¹gnê³a lepszy wynik.
+
+#### Gap statistic
+
+```{r warning=FALSE}
+# Gap statistic
+
+set.seed(123)
+fviz_nbclust(Data, kmeans, nstart = 25,  method = "gap_stat", nboot = 50)+
+  labs(subtitle = "Gap statistic method")
+```
+
+`Gap statistic method` - 4 klastry
+
+Jeden spoœród szeœciu algorytmów wybra³o 2 jako optymaln¹ liczbê klastrów, taka sama iloœci algorytmów przysta³a na 10 grup, pozosta³e zdecydowa³y siê na 4 - mamy wiêc znaczn¹ przewagê dla ostaniej wartosæi, wiêc prawdopobnie powiniœmy podzieliæ zbiór na 4 klastry. Zobaczymy czy jeœli weŸmiemy pod uwagê wiêksz¹ liczbê statystyk dojdziemy do takich samych wniosków.
+
+### Podsumowanie 30 ró¿nych metod
+
+Skorzystamy z pomocy indeksów z pakietu `NBClust`, które s¹ zakodowane jako:`"kl", "ch", "hartigan", "ccc",  "scott",`
+`"marriot", "trcovw", "tracew", "friedman", "rubin",`
+`"cindex", "db", "silhouette", "duda", "pseudot2", "beale",`
+`"ratkowsky", "ball", "ptbiserial", "gap", "frey", "mcclain" "dunn",`
+`"hubert", "sdindex", "dindex", "sdbw"`, aby sprawdziæ czy uda nam siê jednoznacznie wybraæ liczbê klastrów.
+
+```{r, warning=FALSE, message=FALSE, comment=FALSE, prompt=FALSE,echo=FALSE,results='hide', include= FALSE}
+
+res.nbclust <- Data %>%
+  NbClust(distance = "euclidean",
+          min.nc = 2, max.nc = 10, 
+          method = "kmeans", index ="all") 
+
+p <- fviz_nbclust(res.nbclust, ggtheme = theme_minimal())
+```
+
+
+```{r}
+p
+```
+
+Tym razem najwiêcej statystyk wskaza³o 2 jako optymaln¹ liczbê klastrów, chocia¿ 4 w cale nie jest daleko w tyle. Mo¿e wynikaæ to z charakterystyki zbioru, który mo¿na dzieliæ ze wzglêdu na osoby chorê i zdrowe, jak i ze wzglêdu na rodzaj choroby. Niektóre statystyki nie zwrócily w przypadku tej metody klastrowanie wyników, co mo¿e œwiadczyæ o tym, ¿e nie wszystkie wspó³pracuj¹ ze wszystkimi algorytmami. Jak widaæ ró¿ne statystyki wcale nie daj¹ zgodnych wyników.
+
+# Centroid
+
+Tym razem przejdziemy od razu do podsumowania i sprawdzenia wyników dla 30 statystyk.
+
+```{r, warning=FALSE, message=FALSE, comment=FALSE, prompt=FALSE,echo=FALSE,results='hide', include= FALSE}
+
+res.nbclust <- Data %>%
+  NbClust(distance = "euclidean",
+          min.nc = 2, max.nc = 10, 
+          method = "centroid", index ="all") 
+
+p <- fviz_nbclust(res.nbclust, ggtheme = theme_minimal())
+
+```
+
+```{r}
+p
+```
+
+Kolejny raz wiêkszoœæ statystyk wskaza³o 2 jako optymaln¹ liczbê grup, choæ tym razem, drug¹ pod wzglêdem iloœæi g³osów jest grupa, która zag³osowa³a na 5. Pokazuje to, ¿e tak¿e algorytm klastrowania ma wp³yw na wybór liczby klastrów.
+
+# Ward
+
+```{r, warning=FALSE, message=FALSE, comment=FALSE, prompt=FALSE,echo=FALSE,results='hide', include= FALSE}
+
+res.nbclust <- Data %>%
+  NbClust(distance = "euclidean",
+          min.nc = 2, max.nc = 10, 
+          method = "ward.D", index ="all") 
+
+p <- fviz_nbclust(res.nbclust, ggtheme = theme_minimal())
+
+```
+
+```{r}
+p
+```
+
+W tym przypadku tak¿e 2 okaza³a sie najczêœciej wybieran¹ wartoœci¹. Poza tym widzimy ju¿ wczeœniej popularn¹ 4 i nowy pik w 9. Na podstawie uzyskanych rezultatów mo¿na stwierdziæ, ¿e przy wyborze liczby klastróW najlepiej braæ pod uwagê nie pojedyncze statystki lecz ich grupy, a tak¿e to, ¿e ró¿ne algorytmy klasteryzacji nie zawsze s¹ ze sob¹ w 100% zgodne.
+
+# External criteria
+
+Innym sposobem walidacji klasteryzacji jest porównanie wyników z prawdziwymi etykietami, o ile takie posiadamy. Statyk¹, której do tego u¿yjemy bêdzie `Rand index`, a konkretniej `Adjusted Rand index` z pakietu `ClusterR`. Porównuje on etykiety zwrócone przez algorytm z tymi prawdziwymi, na podstawie czego porównuje oba podzia³y.
+
+
+## Gaussian Mixture Models
+
+GMM to algorytm z rodzaju EM (Expectation – Maximalization), w któym zak³ada siê, ¿e zbiór danych 
+mo¿na opisaæ mieszanin¹ rozk³adów normalnych. Algorytm GMM wymaga podania a priori liczby klastrów:
+
+```{r}
+#skalowanie i centrowanie
+dat = center_scale(data, mean_center = T, sd_scale = T)
+
+gmm = GMM(dat, 2, dist_mode = "maha_dist", seed_mode = "random_subset", km_iter = 10,
+          
+          em_iter = 10, verbose = F) 
+
+pr = predict_GMM(dat, gmm$centroids, gmm$covariance_matrices, gmm$weights) 
+
+
+
+```
+
+Funkcja `Optimal_Clusters_GMM`, mo¿e byæ u¿yta do wyznaczenie optymalnej licznoœci klastróW. W tym przypadku do oceny wybraliœmy kryterium `Bayesian information`.
+
+```{r}
+opt_gmm = Optimal_Clusters_GMM(dat, max_clusters = 10, criterion = "BIC", 
+                               
+                               dist_mode = "maha_dist", seed_mode = "random_subset",
+                               
+                               km_iter = 10, em_iter = 10, var_floor = 1e-10, 
+                               
+                               plot_data = T)
+
+
+```
+
+Optymalna liczba klastróW to to z najmniejsz¹ wartoœci¹ indeksu `BIC` -  -12 868.8 odpowiadaj¹ce liczbie 10 klastróW. Jednak na podstawie poprzedniej analizy wybierzemy do poróWnania klasteryzacja na 2 grupy.
+
+```{r warning=FALSE, message=FALSE, comment=FALSE, prompt=FALSE,echo=FALSE,results='hide', include= FALSE}
+dataForTarget <- readr::read_csv("heart.csv")
+targetdf <- as.data.frame(select(dataForTarget, target))
+targetdf$target <- as.numeric(targetdf$target)
+```
+
+```{r}
+
+res = external_validation(targetdf$target, pr$cluster_labels, 
+                          
+                          method = "adjusted_rand_index", summary_stats = T)
+```
+
+`Adjusted-rand-index` uzyska³ wartoœæ 0.1896, gdzie 0 jest równoznaczne z losowym podzieleniem zbioru, a 1 z podzia³em zgodnym z prawdziwymi etykietami. Jest to raczej doœæ s³aby wynik, który mo¿e wskazywaæ na to, ¿e algorytm `GMM` niekoniecznie jest najlepszym wyborem dla danych o takiej charakterystyce co `Heart Disease UCI`. Dla porównania zobaczymy jeszcze jak pordzi³ sobie `Kmeans`.
+
+## Kmeans
+
+```{r, warning=FALSE, message=FALSE, comment=FALSE, prompt=FALSE,echo=FALSE,results='hide', include= FALSE}
+km = KMeans_arma(dat, clusters = 2, n_iter = 10, seed_mode = "random_subset", 
+                 
+                 verbose = T, CENTROIDS = NULL)
+
+pr2 = predict_KMeans(dat, km)
+pr2 <- pr2-1
+pr2 <- as.numeric(pr2)
+```
+
+```{r}
+res = external_validation(targetdf$target, pr2, 
+                          
+                          method = "adjusted_rand_index", summary_stats = T)
+
+```
+
+`Kmeans` pordzi³ sobie niewiele lepiej otrzymuj¹c wynik `adjusted-rand-index` na poziomie 0.2942.
+
+
+# Wizualizacja wybranej liczby klastrów
+
+Teraz sprawdzimy jak inne algorytmy klastrowania poradz¹ sobie z podzia³em zbioru na wybrane wczeœniej 2 klastry.
+
+
+
+## Klastrowanie hierarchiczne
+
+```{r warning=FALSE, message=FALSE, comment=FALSE, prompt=FALSE,echo=FALSE}
+
+hc <- Data %>% eclust("hclust", k = 2, graph = FALSE)
+
+fviz_cluster(hc, data = Data,
+             ellipse.type = "convex",
+             palette = "jco",
+             ggtheme = theme_minimal())
+
+```
+
+Na powy¿szym wykresie nie widaæ dobrze odzielonych klastrów.
+
+## Fuzzy clustering
+
+```{r}
+fuzzy <- fanny(Data, k=2)
+
+fviz_cluster(fuzzy, data = Data,
+             ellipse.type = "convex",
+             palette = "jco",
+             ggtheme = theme_minimal())
+```
+
+Na wykresie `Fuzzy Clustering` widzymy ju¿ ca³kiem dobry podzia³. 
+
+## DBSCAN
+
+Na pocz¹tku wybierzemy optymaln¹ wartoœæ dla parametru `eps` powinna ona znajdowaæ siê na `kolanie` na poni¿szym wykresie.
+```{r}
+
+dbscan::kNNdistplot(Data, k=2)
+
+```
+
+W tym przypadku wartoœæ przypada na oko³o `1`
+
+```{r}
+library(fpc)
+
+db <- fpc::dbscan(Data, eps = 1.2, MinPts = 5)
+
+fviz_cluster(db, data = Data, stand = FALSE,
+             ellipse = FALSE, show.clust.cent = FALSE,
+             geom = "point",palette = "jco", ggtheme = theme_classic())
+```
+
+Tym razem algorytm podzieli³ zbiór na jeden klaster i wartoœci odstaj¹ce, wskazuje to na inny sposób dzia³ania w porówaniu do pozosta³ych metod.

@@ -1,7 +1,7 @@
 ---
 title: "Lasy losowe"
 author: "Łukasz Brzozowski"
-date: "29.04.2019"
+date: "27.05.2019"
 output:
   html_document:
     df_print: paged
@@ -13,12 +13,17 @@ output:
 ---
 
 ```{r setup, include=FALSE}
+set.seed(1)
 knitr::opts_chunk$set(echo = TRUE, cache = TRUE)
 library(dplyr)
 library(mlr)
 library(ggplot2)
 library(DALEX)
+library(rpart.plot)
+library(rpart)
+library(ROCR)
 ```
+
 
 #Prezentacja danych
 
@@ -28,145 +33,147 @@ dat$age <- as.integer(dat$age)
 dat$survived <- as.factor(dat$survived)
 dat$class <- as.factor(dat$class)
 summarizeColumns(dat)
-TestInx <- sample(nrow(dat), size = 0.2*nrow(dat))
+TestInx <- sample(nrow(dat), size = 0.3*nrow(dat))
 datTrain <- dat[-TestInx,]
 datTest <- dat[TestInx,]
 datTrain <- na.omit(datTrain)
 datTest <- na.omit(datTest)
+dat <- na.omit(dat)
 ```
 
-Przedstawione dane dotyczą przeżywalności osób obecnych na statku podczas katastrofy Tytanika. W ramce obecnych jest pięć zmiennych kategorycznych, w tym zmienna celu `survived` oraz cztery zmienne numeryczne. W niewielkim procencie w ramce występują braki danych, które należy usunąć, ponieważ model `classif.ranger` nie przyjmuje danych z wartościami NA. Ze&nbsp;zbioru wybieramy zbiór testowy liczności 423 wierszy, co odpowiada w przybliżeniu 20% wejściowego zbioru.
+Przedstawione dane dotyczą przeżywalności osób obecnych na statku podczas katastrofy Tytanika. W ramce obecnych jest pięć zmiennych kategorycznych, w tym zmienna celu `survived` oraz cztery zmienne numeryczne. W niewielkim procencie w ramce występują braki danych, które można bezstratnie usunąć. Do klasyfikacji użyjemy modelu `rpart`.
 
 
 # Modele
 
 ## Parametry z artykułu
 
-Na początku zbudujemy model lasu losowego z hiperparametrami podanymi w artykule. Model oprzemy na implementacji `ranger` z pakietu `mlr`. Parametry to:
+Na początku zbudujemy model lasu losowego z hiperparametrami podanymi w artykule. Model oprzemy na implementacji `rpart`. Parametry to:
 
-* `num.trees` = 983 - liczba drzew,
-* `replace` = FALSE - wybór próbek z powtórzeniami,
-* `sample.fraction` = 0.703 - część obserwacji do próbkowania,
-* `mtry` = 0.257p, gdzie p to liczba zmiennych - liczba zmiennych decyzyjnych w jednym węźle,
-* `respect.unordered.factors` = FALSE - zachowanie względem zmiennych towarzyszących,
-* `min.node.size` = 1 - minimalna wielkość węzła.
+* `minsplit` = 24 - najmniejsza liczba obserwacji potrzebna do wykonania operacji `split`,
+* `minbucket` = 12 - najmniejsza liczba obserwacji w każdym liściu drzewa,
+* `cp` = 0 - współczynnik zaawansowania modelu,
+* `maxdepth` = 21 - największa głębokość drzewa.
 
 ```{r, warning = FALSE, cache = TRUE}
-classifTask1 <- makeClassifTask(id = "rf1", data = datTrain, target = "survived")
-classifLrn1 <- makeLearner("classif.ranger", predict.type = "prob", par.vals = list(num.trees = 983,
-                                                                                        replace = FALSE,
-                                                                                        sample.fraction = 0.703,
-                                                                                        mtry = floor(0.257 * 8),
-                                                                                        respect.unordered.factors = 'ignore',
-                                                                                        min.node.size = 1))
-trained <- train(classifLrn1, classifTask1)
-pred <- predict(trained, newdata = datTest)
-performance(pred, measures = list(acc, auc))
+set.seed(1)
+pars <- rpart.control(minsplit = 24, minbucket = 12, cp = 0, maxdepth = 21)
+
+model1 <- rpart(survived ~. , method = "class", data = datTrain, control = pars)
+
+res1 <- predict(model1, newdata = datTest, type = "prob")
+pred1 <- prediction( res1[, 2], datTest$survived)
+perf1 <- performance(pred1, "tpr", "fpr")
+perf1_1 <- performance(pred1, "auc")
+plot(perf1)
+abline(0, 1, lty = 2)
+slot(perf1_1, "y.values")
+
 ```
-Jak widzimy, uzyskane przy tych parametrach wyniki są dobre - otrzymujemy skuteczność na poziomie 80% oraz `AUC` na poziomie prawie 84%.
+Jak widzimy, przy pomocy hiperparametrów z artykułu otrzymujemy AUC w wysokości prawie 82%.
 
 ## Domyślne parametry
 
-Zbudujemy teraz model z domyślnymi parametrami implementacji `classif.ranger`.
+Zbudujemy teraz model z domyślnymi parametrami implementacji pakietu `rpart`.
 
-```{r, cache = TRUE, warning = FALSE}
-classifTask2 <- makeClassifTask(id = "rf1", data = datTrain, target = "survived")
-classifLrn2 <- makeLearner("classif.ranger", predict.type = "prob")
-trained2 <- train(classifLrn2, classifTask2)
-pred2 <- predict(trained2, newdata = datTest)
-performance(pred2, measures = list(acc, auc))
+```{r, warning = FALSE}
+set.seed(1)
+model2 <- rpart(survived ~. , method = "class", data = datTrain)
+res2 <- predict(model2, newdata = datTest, type = "prob")
+pred2 <- prediction( res2[, 2], datTest$survived)
+perf2 <- performance(pred2, "tpr", "fpr")
+perf2_1 <- performance(pred2, "auc")
+plot(perf2)
+abline(0, 1, lty = 2)
+slot(perf2_1, "y.values")
 ```
 
-Otrzymany model ma bardzo podobne wyniki do uzyskanego z parametrami z artykułu, jedynie skuteczność jest o 0.5% lepsza, jednak mieści się to w błędzie ziarna losowości.
+Otrzymany model ma bardzo podobne wyniki do uzyskanego z parametrami z artykułu, jednak skuteczność jest o ponad jeden punkt procentowy gorsza.
 
 ## Random search
 
 Ostatecznie przygotujemy model przy pomocy przeszukiwania losowego przestrzeni hiperparametrów. Będziemy przeszukiwać parametry podane w artykule, ponieważ to umożliwi nam łatwe porównanie wyników.
 
-```{r, eval = FALSE}
-classifTask3 <- makeClassifTask(id = "rf1", data = datTrain, target = "survived")
-classifLrn3 <- makeLearner("classif.ranger", predict.type = "prob")
+```{r, eval = TRUE, warning = FALSE, message = FALSE}
+set.seed(1)
+classifTask3 <- makeClassifTask(id = "rpart1", data = datTrain, target = "survived")
+classifLrn3 <- makeLearner("classif.rpart", predict.type = "prob")
 
 cv <- makeResampleDesc("CV", iters = 5L)
-ctrlRandom <- makeTuneControlRandom(maxit = 100L)
+ctrlRandom <- makeTuneControlRandom(maxit = 1000L)
 
 rfPms <- makeParamSet(
-  makeIntegerParam("num.trees", lower = 1, upper = 5000, trafo = function(x) x),
-  makeLogicalParam("replace"),
-  makeNumericParam("sample.fraction", lower = 0.1, upper = 1, trafo = function(x) x),
-  makeNumericParam("mtry", lower = 0, upper = 1, trafo = function(x) floor(8*x)),
-  makeDiscreteParam("respect.unordered.factors", values = c("order", "ignore")),
-  makeNumericParam("min.node.size", lower = 0, upper = 1, trafo = function(x) floor(8^x)))
+  makeNumericParam("cp", lower = 0, upper = 0.2),
+  makeIntegerParam("maxdepth", lower = 2, upper = 50),
+  makeIntegerParam("minbucket", lower = 2, upper = 50),
+  makeIntegerParam("minsplit", lower = 2, upper = 50)
+  )
 
-rfRes <- tuneParams(classifLrn3, task = classifTask3, measures = list(acc, auc), resampling = cv, par.set = rfPms, control = ctrlRandom)
+rpartRes <- tuneParams(classifLrn3, task = classifTask3, measures = list(acc, auc), resampling = cv, par.set = rfPms, control = ctrlRandom)
 
-lrn <- setHyperPars(classifLrn3, par.vals = rfRes$x)
-model <- train(lrn, classifTask3)
-results <- predict(model, newdata = datTest)
-performance(results, list(auc, acc))
+model3 <-  rpart(survived ~. , method = "class", data = datTrain, control = rpartRes$x)
+
+res3 <- predict(model3, newdata = datTest, type = "prob")
+pred3 <- prediction( res3[, 2], datTest$survived)
+perf3 <- performance(pred3, "tpr", "fpr")
+perf3_1 <- performance(pred3, "auc")
+plot(perf3)
+abline(0, 1, lty = 2)
+slot(perf3_1, "y.values")
 ```
 
-```{r}
-res <- read.csv("results.csv")
-res
-```
-
-Jak widzimy, po przeszukaniu przestrzeni parametrów osiągnęliśmy nieco gorsze wyniki niż uzyskane z parametrami z artykułu oraz domyślnymi. Ostatecznie z trzech zbudowanych modeli najlepszy okazał się ten uzyskany przy domyślnych parametrach.
+Jak widzimy, po przeszukaniu przestrzeni parametrów osiągnęliśmy gorsze wyniki niż uzyskane z parametrami z artykułu oraz domyślnymi. Ostatecznie z trzech zbudowanych modeli najlepszy okazał się ten uzyskany przy domyślnych parametrach.
 
 ## Najlepsze drzewo
 
-Niestety nie znalazłem możliwości narysowania drzewa z implementacji `classif.ranger`. Możemy jednak wygenerować wykres PDP.
-```{r, warning = FALSE}
-genDat <- generatePartialDependenceData(trained2, input = datTest)
-plotPartialDependence(genDat)
+Możemy sprawdzić, jak wygląda najlepsze drzewo
+```{r, fig.width = 10, fig.height= 10, fig.align="center"}
+rpart.plot(model1, type = 1)
 ```
 
-Na wykresie widzimy, że dla drzewa szczególnie ważnym czynnikiem jest płeć, ponieważ kobiety częściej uchodziły z życiem z tonącego statku. Następnie widzimy rosnącą szansę na przeżycyei wraz z wiekiem. Ciekawym jest brak liniowej zależności przeżycia od klasy, którą podróżował pasażer.
+Na wykresie widzimy, że dla drzewa szczególnie ważnym czynnikiem jest płeć, ponieważ kobiety częściej uchodziły z życiem z tonącego statku. Następnie, co zaskakujące, największą szansę na przeżycie miały osoby podróżujące trzecią klasą.
 
 ## Porównanie kryteriów podziału
 
-Teraz porównajmy wyniki lasów dzielących etykiety według różnych kryteriów podziału. Implementacja `classif.ranger` udostępnia dwie możliwe zasady dzielenia - `gini` oraz `extratrees`, czyli dzielenie całkowicie losowe. Do porównania dodamy także dzielenie `information-gain` z implementacji `classif.rpart`.
+Teraz porównajmy wyniki drzew dzielących etykiety według różnych kryteriów podziału. Implementacja `classif.rpart` udostępnia dwie możliwe zasady dzielenia - `gini` oraz `information`.
+
+### `information`
+
+```{r, eval = TRUE}
+model4 <- rpart(survived ~. , method = "class", data = datTrain, parms = list(split = "information"))
+res4 <- predict(model4, newdata = datTest, type = "prob")
+pred4 <- prediction( res4[, 2], datTest$survived)
+perf4 <- performance(pred4, "tpr", "fpr")
+perf4_1 <- performance(pred4, "auc")
+plot(perf4)
+abline(0, 1, lty = 2)
+slot(perf4_1, "y.values")
+```
 
 ### `gini`
-
-```{r}
-classifTask4 <- makeClassifTask(id = "rf1", data = datTrain, target = "survived")
-classifLrn4 <- makeLearner("classif.ranger", predict.type = "prob", par.vals = list(splitrule = "gini"))
-trained4 <- train(classifLrn4, classifTask4)
-pred4 <- predict(trained4, newdata = datTest)
-performance(pred4, measures = list(acc, auc))
+```{r, eval = TRUE}
+model5 <- rpart(survived ~. , method = "class", data = datTrain, parms = list(split = "gini"))
+res5 <- predict(model5, newdata = datTest, type = "prob")
+pred5 <- prediction( res5[, 2], datTest$survived)
+perf5 <- performance(pred5, "tpr", "fpr")
+perf5_1 <- performance(pred5, "auc")
+plot(perf5)
+abline(0, 1, lty = 2)
+slot(perf5_1, "y.values")
 ```
 
-### `extratrees`
-```{r}
-classifTask5 <- makeClassifTask(id = "rf1", data = datTrain, target = "survived")
-classifLrn5 <- makeLearner("classif.ranger", predict.type = "prob", par.vals = list(splitrule = "extratrees"))
-trained5 <- train(classifLrn5, classifTask5)
-pred5 <- predict(trained5, newdata = datTest)
-performance(pred5, measures = list(acc, auc))
-```
 
-### `information gain`
-```{r}
-classifTask6 <- makeClassifTask(id = "rf2", data = datTrain, target = "survived")
-classifLrn6 <- makeLearner("classif.rpart", predict.type = "prob", par.vals = list(parms = list(split = 'information')))
-trained6 <- train(classifLrn6, classifTask6)
-pred6 <- predict(trained6, newdata = datTest)
-performance(pred6, measures = list(acc, auc))
-```
-
-Jak widzimy, wyniki osiągnięte implementacją `classif.ranger` są do siebie praktycznie identyczne i lepsze, niż dzielenie `information-gain` z implementacji `classif.rpart`.
+Jak widzimy, wyniki osiągnięte przy pomocy metody dzielącej `gini` są nieznacznie lepsze od metody `information gain`, osiągając ponad 79% AUC.
 
 # Porównanie z `ctree`
 
 Na koniec porównajmy osiągnięty model z modelem `ctree` na domyślnych parametrach.
 
-```{r}
+```{r, eval = TRUE, message = FALSE, warning = FALSE}
 classifTask7 <- makeClassifTask(id = "rf2", data = datTrain, target = "survived")
 classifLrn7 <- makeLearner("classif.ctree", predict.type = "prob")
-trained7 <- train(classifLrn7, classifTask7)
-pred7 <- predict(trained7, newdata = datTest)
-performance(pred7, measures = list(acc, auc))
+r <- resample(classifLrn7, classifTask7, cv5, measures = list(acc, auc))
+r$aggr
 ```
 
-Jak widzimy, uzyskane przez nas drzewo `classif.ranger` z domyślnymi parametrami zadziałało nieco lepiej niż warunkowa implementacja drzew, jednak uzyskany wynik prawdopodobnie można poprawić przez odpowiednie dostrajanie parametrów.
+Warunkowa implementacja zadziałała gorzej, niż wygenerowane wcześniej drzewa. Jest to jednak wynik kroswalidacyjny, ponieważ zbiór testowy zawierał osoby z krajów, które nie pojawiały się w zbiorze treningowym, na co implementacja `ctree` nie jest odporna. Zatem faktyczna skuteczność algorytmu prawdopodobnie jest jeszcze niższa. Ostatecznie zatem najlepszy wynik uzyskaliśmy modelem zbudowanym na parametrach podanych w artykule. 

@@ -1,0 +1,124 @@
+---
+title: "Statystyki jakości kalsteryzacji"
+author: "Szymon Maksymiuk"
+date: "03.06.2019"
+output:
+  html_document:
+    df_print: paged
+    toc: true
+    toc_float: true
+    code_folding: hide
+    number_sections: true
+    theme: spacelab
+---
+
+```{r message=FALSE, warning=FALSE}
+library(mlr)
+data <- read.csv("Sales_Transactions_Dataset_Weekly.csv")
+data <- data[,-(1:53)]
+```
+
+# Wstęp
+
+## Dane oraz modele
+
+W poniższej pracy przyjrzę się statyskom pozwalającym nam w jakichś sposób mierzyć jakość klasteryzacji. Niesiony [artykułem](https://www.researchgate.net/publication/2500099_On_Clustering_Validation_Techniques) postaram się zaprezentwać kilka z nich. Zbiorem danych na którym dokonam obliczeń będą dane sprzedaży w pewnym sklepie, każdy wiersz zawiera znormalizowaną liczność danego produktu zakupioonego w danym tyogdniu. Oryginalne dane znajdują się [tutaj](https://archive.ics.uci.edu/ml/datasets/Sales_Transactions_Dataset_Weekly). Ocenie poddam kalsteryzacje dokonane za pomocą dwóch alogorytmów `kmeans`oraz `cmeans` dostępnych poprzez wrapper `mlr`. Rozważę opcje z klastrami wielkości 3, 5 oraz 9.
+
+## Statystyki
+
+Przyjrzę się bliżej 4 stastykom.
+
+* Zewnętrzne (Porównujące dwa klastrowania lub klastorwanie z oryginalnymi etykietami)
+    + Statystyka Randa
+* Wewnętrzne (Określające klastrowanie od wewnątrz)
+    + Indeks Davies'a-Bouldina
+    + Wewnętrzny indeks jakości G2
+    + Indeks Dunna
+    
+# Wyniki
+
+```{r}
+task <- makeClusterTask("PD6", data)
+lrn_3_k <- makeLearner("cluster.kmeans", centers = 3)
+lrn_5_k <- makeLearner("cluster.kmeans", centers = 5)
+lrn_9_k <- makeLearner("cluster.kmeans", centers = 9)
+
+lrn_3_c <- makeLearner("cluster.cmeans", centers = 3)
+lrn_5_c <- makeLearner("cluster.cmeans", centers = 5)
+lrn_9_c <- makeLearner("cluster.cmeans", centers = 9)
+
+
+labels_3_k <- train(lrn_3_k, task)$learner.model$cluster
+labels_5_k <- train(lrn_5_k, task)$learner.model$cluster
+labels_9_k <- train(lrn_9_k, task)$learner.model$cluster
+labels_3_c <- train(lrn_3_c, task)$learner.model$cluster
+labels_5_c <- train(lrn_5_c, task)$learner.model$cluster
+labels_9_c <- train(lrn_9_c, task)$learner.model$cluster
+```
+
+## Statystyki zewnętrzne
+
+### Statystyka Randa
+
+Statystyka Randa przyjmuje wartości z przedziału [0,1]. Wynik 1 oznacza całkowitą zgodność dwóch podziałów podczas gdy wynik 0 oznacza całowite przeciwieństwo. Skorzystamy z tej wartości aby porównać dwa wyniki dla różnych metod klastrowania. Użyjemy funkcji `fossil::rand.index()`.
+
+```{r}
+paste("Trzy klastry:", fossil::rand.index(labels_3_k, labels_3_c))
+paste("Pięć klastrów:", fossil::rand.index(labels_5_k, labels_5_c))
+paste("Dziewięć klastrów:", fossil::rand.index(labels_9_k, labels_9_c))
+```
+
+Jak widzimy modele były niemal całowicie zgodne ze sobą. Interesujący wynik prezentuje się dla pięciu klastrów, gdzie owe podobieństwo jest największe. Ciekawym faktem jest również, że podobieństwo maleje wraz ze wzrostem liczby klastrów.
+
+## Statystyki wewnętrzne
+
+### Indeks Dunna
+
+Indeks Dunna jak na statystykę wewnętrzną przystało bazuje jedynie na odległościach pomiędzy obserwacjami oraz klastrami. Ma na celu identyfikację klastrów w których wariancja pomiędzy obserwacjami jest mała oraz wyróżnić dzięki temu dobrze sperowalne klastry. Przyjmuje wartości z przedziału [0,1] gdzie 1 oznacza dobrą klasteryzację. Do oblicznie statystyk uzyję funkcji `clValid::dunn()`.
+
+```{r}
+paste("kmeans - 3 klastry", clValid::dunn(Data = data, clusters = labels_3_k), sep = " - ")
+paste("kmeans - 5 klastrów", clValid::dunn(Data = data, clusters = labels_5_k), sep = " - ")
+paste("kmeans - 9 klastrów", clValid::dunn(Data = data, clusters = labels_9_k), sep = " - ")
+paste("cmeans - 3 klastry", clValid::dunn(Data = data, clusters = labels_3_c), sep = " - ")
+paste("cmeans - 5 klastrów", clValid::dunn(Data = data, clusters = labels_5_c), sep = " - ")
+paste("cmeans - 9 klastrów", clValid::dunn(Data = data, clusters = labels_9_c), sep = " - ")
+```
+
+Ponownie interesujące wyniki. Okazuje się, iż nasze klastry są beznadziejne. Najlepiej poradził sobię algorytm `kmeans` dla 9 klastrów. Niestety  `cmeans`  zaczął nieznacznie odstawać przy tej wartości. Sprawdźmy jednak inne statystyki.
+
+### Indeks Davies'a-Bouldina
+
+Ten wewnętrzny indeks dokonuje oceny clusteringu pokazuje średnią miarę podobieństwa pomiędzy każdym z klastrów, a tym najbardziej podobnym do niego. Dlatego też pragniemy, aby wartość tej statystyki była najmniejsza, podobieństwo pomiędzy klastrami nie jest fajne. Wadą tego indeksu jest fakt, iż dobry wynik względem niej, nie gwarantuje dobrej klasteryzacji. Funkcją wyliczającą indeks jest `clusterSim::index.DB`.
+
+```{r}
+paste("kmeans - 3 klastry", clusterSim::index.DB(data, labels_3_k)$DB, sep = " - ")
+paste("kmeans - 5 klastrów", clusterSim::index.DB(data, labels_5_k)$DB, sep = " - ")
+paste("kmeans - 9 klastrów", clusterSim::index.DB(data, labels_9_k)$DB, sep = " - ")
+paste("cmeans - 3 klastry", clusterSim::index.DB(data, labels_3_c)$DB, sep = " - ")
+paste("cmeans - 5 klastrów", clusterSim::index.DB(data, labels_5_c)$DB, sep = " - ")
+paste("cmeans - 9 klastrów", clusterSim::index.DB(data, labels_9_c)$DB, sep = " - ")
+```
+
+
+Zgodnie z wcześniejszymi miarami podobieństwa pomiędzy klasteryzacjami wyniki kolejnej statystyki ponownie się powtarzaja. Jak Widzimy w przypadku naszego zbioru im mniej klastrow, tym, według indeksu Davies'a-Bouldina, lepiej. Fakt iż podział na 5 zbiorów nieznacznie zwiększa wartość indeksu, może świadczyć o ogólnej spójności zbiorów i trudnej separowalności.
+
+### Wewnętrzny indeks jakości G2
+
+To już ostatnia statystyka nad którą się pochylimy. Jest to intepretacja Gamma statystyki Goodmana-Kruskala autorstwa Huberta oraz Bakera. Jest to bardzo ciekawy indeks ale niestety dostęp do artykułu jest płatny. Wiem tylko, że wyznacza średnie korelacje pomiędzy klastrami, stąd wartość może być ujemna.
+
+```{r}
+paste("kmeans - 3 klastry", clusterSim::index.G2(dist(data), labels_3_k), sep = " - ")
+paste("kmeans - 5 klastrów", clusterSim::index.G2(dist(data), labels_5_k), sep = " - ")
+paste("kmeans - 9 klastrów", clusterSim::index.G2(dist(data), labels_9_k), sep = " - ")
+paste("cmeans - 3 klastry", clusterSim::index.G2(dist(data), labels_3_c), sep = " - ")
+paste("cmeans - 5 klastrów", clusterSim::index.G2(dist(data), labels_5_c), sep = " - ")
+paste("cmeans - 9 klastrów", clusterSim::index.G2(dist(data), labels_9_c), sep = " - ")
+````
+
+Optymalnym wynikiem jest 0, tak więc obecny wynik pozostawia wiele do życzenia. Tym razem, w przeciwieństwie do indeksu Dunna, najelpszy okazuje podział na 3 klastry.
+
+
+# Podsumowanie
+
+Przedstawiony zbiór nie jest łatwo separowalny. Różne statystyki przedstawiają różne spojrzenie na ten problem oraz liczbę klastrów. Większość statystyk wskazuje 3 jako najlepsze klastrowanie.
